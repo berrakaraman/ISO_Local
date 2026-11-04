@@ -1,0 +1,100 @@
+// Roller, durumlar ve olay tipleri. Frontend de ayni kodlari kullanir.
+
+const ROLLER = {
+  ADMIN: "ADMIN", // firma yoneticisi: tanimlar, kullanicilar
+  YONETIM: "YONETIM", // raporlar, KPI
+  KALITE: "KALITE", // kalite kontrol + kalite sorumlusu
+  SEF: "SEF", // uretim sefi: is emri, yonlendirme
+  DEPO: "DEPO", // mal kabul, cekis, sevkiyat
+  OPERATOR: "OPERATOR", // kiosk islemleri
+  DENETCI: "DENETCI", // salt okunur
+};
+
+// Birim (fiziksel parca) durumlari - bolum 12
+const BIRIM_DURUM = {
+  KONTROL_BEKLIYOR: "KONTROL_BEKLIYOR", // RM: giris kontrolu bekliyor
+  KABUL: "KABUL", // RM: kullanilabilir
+  KARANTINA: "KARANTINA",
+  RET: "RET",
+  TUKENDI: "TUKENDI", // RM: tamami tuketildi
+  KESIM_BEKLIYOR: "KESIM_BEKLIYOR", // FG_LOT (top)
+  KESILDI: "KESILDI", // FG_LOT
+  KALITE_BEKLIYOR: "KALITE_BEKLIYOR", // FG birim
+  SERBEST: "SERBEST",
+  DEPODA: "DEPODA",
+  SIPARISE_AYRILDI: "SIPARISE_AYRILDI",
+  SEVK_EDILDI: "SEVK_EDILDI",
+  BOLUNDU: "BOLUNDU",
+  KARAR_BEKLIYOR: "KARAR_BEKLIYOR", // KR
+  OLUMLU: "OLUMLU", // KR
+  YENIDEN_ISLEME: "YENIDEN_ISLEME", // KR
+  HURDA: "HURDA",
+  SARTLI_KABUL: "SARTLI_KABUL", // KR
+  ARSIVDE: "ARSIVDE", // NM
+  IMHA_EDILDI: "IMHA_EDILDI", // NM
+  IPTAL: "IPTAL",
+};
+
+const IS_EMRI_DURUM = {
+  PLANLANDI: "PLANLANDI",
+  ILK_PARCA_BEKLIYOR: "ILK_PARCA_BEKLIYOR",
+  URETIMDE: "URETIMDE",
+  DURAKLATILDI: "DURAKLATILDI",
+  TAMAMLANDI: "TAMAMLANDI",
+  TAMAMLANDI_FARK: "TAMAMLANDI_FARK",
+  IPTAL: "IPTAL",
+};
+
+// Olay tipleri - bolum 13.1
+const OLAY = {
+  KABUL: "KABUL",
+  KONTROL_KARARI: "KONTROL_KARARI",
+  YERLESTIRME: "YERLESTIRME",
+  CEKIS: "CEKIS",
+  BOLME: "BOLME",
+  YUKLEME: "YUKLEME",
+  TUKETIM: "TUKETIM",
+  IADE: "IADE",
+  IS_EMRI_ACILDI: "IS_EMRI_ACILDI",
+  IS_EMRI_BASLADI: "IS_EMRI_BASLADI",
+  IS_EMRI_DURUM: "IS_EMRI_DURUM",
+  ILK_PARCA: "ILK_PARCA",
+  URETIM: "URETIM",
+  KARANTINAYA_AYIRMA: "KARANTINAYA_AYIRMA",
+  KARANTINA_KARARI: "KARANTINA_KARARI",
+  KESIM: "KESIM",
+  SON_KONTROL: "SON_KONTROL",
+  NUMUNE: "NUMUNE",
+  HURDA: "HURDA",
+  YENIDEN_ETIKET: "YENIDEN_ETIKET",
+  ETIKET_BASKISI: "ETIKET_BASKISI",
+  BLOKE: "BLOKE",
+  BLOKE_KALDIRMA: "BLOKE_KALDIRMA",
+  SIPARISE_AYIRMA: "SIPARISE_AYIRMA",
+  SEVKIYAT: "SEVKIYAT",
+  MUSTERI_IADESI: "MUSTERI_IADESI",
+  DUZELTME: "DUZELTME",
+  IPTAL: "IPTAL",
+};
+
+// Barkod onekleri - bolum 10.4
+const ONEK = {
+  RM: "RM",
+  WIP: "WIP",
+  FG: "FG",
+  KR: "KR",
+  NM: "NM",
+  IE: "IE",
+  SV: "SV",
+};
+
+// Form onay akisi (bolum 14): kayit turleri ve durumlar
+const ONAY_TURU = ["HAMMADDE", "IS_EMRI", "URETIM_LOT", "KARANTINA", "KALITE", "SEVKIYAT", "URETIM_OZETI"];
+const ONAY_DURUM = {
+  BEKLIYOR: "BEKLIYOR",
+  ASKIDA: "ASKIDA",
+  ONAYLANDI: "ONAYLANDI",
+  REDDEDILDI: "REDDEDILDI",
+};
+
+module.exports = { ROLLER, BIRIM_DURUM, IS_EMRI_DURUM, OLAY, ONEK, ONAY_TURU, ONAY_DURUM };

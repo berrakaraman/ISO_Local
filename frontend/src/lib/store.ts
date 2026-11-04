@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
-import { SEED, USERS, type Row, type Status } from "./iso-data";
+import { SEED, kisiAdi, type Row, type Status } from "./iso-data";
+import { oturumOku, useOturum } from "./oturum";
 
 type State = { rows: Record<string, Row[]>; session: string | null };
 const KEY = "iso-lot-v8";
@@ -20,24 +21,20 @@ function set(next: State) {
 export function useStore() {
   return useSyncExternalStore((l) => { listeners.add(l); return () => listeners.delete(l); }, () => (ensure(), state), () => ({ rows: SEED, session: null }));
 }
+// Giris yapan gercek kullanici (sistemdeki oturum)
 export function useCurrentUser() {
-  const s = useStore(); return USERS.find((u) => u.id === s.session) ?? null;
+  const o = useOturum();
+  return o ? { id: o.kullanici.id, name: o.kullanici.adSoyad } : null;
 }
+const benAdi = () => oturumOku()?.kullanici.adSoyad ?? "—";
+export const benimMi = (atanan: string, ad?: string | null) => !!ad && kisiAdi(atanan) === ad;
 
 export const actions = {
-  login(username: string, password: string) {
-    ensure(); const u = USERS.find((x) => x.username === username.trim().toLowerCase() && x.password === password);
-    if (!u) return false; set({ ...state, session: u.id }); return true;
-  },
-  logout() { set({ ...state, session: null }); },
   add(table: string, data: Row["data"], assignee: string) {
-    const row: Row = { id: crypto.randomUUID(), data, assignee, status: "Bekliyor", createdBy: state.session ?? "u1", createdAt: new Date().toISOString() };
+    const row: Row = { id: crypto.randomUUID(), data, assignee, status: "Bekliyor", createdBy: benAdi(), createdAt: new Date().toISOString() };
     set({ ...state, rows: { ...state.rows, [table]: [row, ...(state.rows[table] ?? [])] } });
   },
-  remove(table: string, id: string) {
-    set({ ...state, rows: { ...state.rows, [table]: state.rows[table].filter((r) => r.id !== id) } });
-  },
   decide(table: string, id: string, status: Status, note?: string) {
-    set({ ...state, rows: { ...state.rows, [table]: state.rows[table].map((r) => r.id === id ? { ...r, status, note, decidedBy: state.session ?? undefined, decidedAt: new Date().toISOString() } : r) } });
+    set({ ...state, rows: { ...state.rows, [table]: state.rows[table].map((r) => r.id === id ? { ...r, status, note, decidedBy: benAdi(), decidedAt: new Date().toISOString() } : r) } });
   }
 };

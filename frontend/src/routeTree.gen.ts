@@ -10,6 +10,9 @@ import { Route as pKarantina } from "./routes/_panel.karantina-red";
 import { Route as pKalite } from "./routes/_panel.kalite-kontrol";
 import { Route as pSevkiyat } from "./routes/_panel.sevkiyat";
 import { Route as pTanimlar } from "./routes/_panel.tanimlar";
+import { Route as pIzle } from "./routes/_panel.izle";
+import { Route as pIzleBarkod } from "./routes/_panel.izle.$barkod";
+import { Route as qrRoute } from "./routes/b.$barkod";
 
 const IndexRoute = indexRoute.update({
   id: "/",
@@ -25,8 +28,16 @@ const PanelPanelRoute = panelDashboard.update({
   getParentRoute: () => PanelRoute,
 } as any);
 
+const QrRoute = qrRoute.update({
+  id: "/b/$barkod",
+  path: "/b/$barkod",
+  getParentRoute: () => rootRoute,
+} as any);
+
 const children = [
   PanelPanelRoute,
+  pIzle.update({ path: "/izle", getParentRoute: () => PanelRoute } as any),
+  pIzleBarkod.update({ path: "/izle/$barkod", getParentRoute: () => PanelRoute } as any),
   pYonetim.update({
     path: "/tablo/yonetim-paneli",
     getParentRoute: () => PanelRoute,
@@ -64,6 +75,7 @@ const children = [
 const PanelRouteWithChildren = PanelRoute._addFileChildren(children);
 export const routeTree = rootRoute._addFileChildren([
   IndexRoute,
+  QrRoute,
   PanelRouteWithChildren,
 ]) as any;
 

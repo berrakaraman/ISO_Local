@@ -1,11 +1,19 @@
 {
   "name": "iso-backend",
-  "version": "1.0.0",
-  "description": "UNELSIS ISO 9001:2026 MES Backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Uretim izlenebilirlik ve ISO 9001 KYS - API",
   "main": "src/server.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js"
+    "dev": "node --watch src/server.js",
+    "db:migrate": "node src/db/migrate.js",
+    "db:seed": "node src/db/seed.js",
+    "db:reset": "node src/db/migrate.js --sifirla && node src/db/seed.js",
+    "test:akis": "node scripts/akis-testi.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

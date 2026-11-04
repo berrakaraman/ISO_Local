@@ -1,0 +1,23 @@
+# Bagimliliklar (npm install ile yeniden kurulur, git'e girmez)
+node_modules/
+
+# Gizli ayarlar
+.env
+.env.*
+!.env.example
+
+# Derleme ciktilari
+dist/
+build/
+.vite/
+
+# Loglar ve sistem dosyalari
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/

@@ -26,8 +26,8 @@ export function DecisionActions({ table, id, label }: { table: string; id: strin
   return (
     <>
       <div className="flex items-center gap-1">
-        <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={() => setPending("Onaylandı")}><Check className="h-3.5 w-3.5 mr-1" /> Onayla</Button>
-        <Button size="sm" variant="destructive" onClick={() => setPending("Reddedildi")}><X className="h-3.5 w-3.5 mr-1" /> Reddet</Button>
+        <Button size="sm" className="bg-uygun text-white hover:bg-uygun/90" onClick={() => setPending("Onaylandı")}><Check className="h-3.5 w-3.5 mr-1" /> Onayla</Button>
+        <Button size="sm" className="bg-unity text-white hover:bg-unity-koyu" onClick={() => setPending("Reddedildi")}><X className="h-3.5 w-3.5 mr-1" /> Reddet</Button>
       </div>
       <Dialog open={!!pending} onOpenChange={(o) => !o && setPending(null)}>
         <DialogContent>

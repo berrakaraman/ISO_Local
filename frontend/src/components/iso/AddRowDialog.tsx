@@ -14,7 +14,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { USERS, type TableDef } from "@/lib/iso-data";
+import type { TableDef } from "@/lib/iso-data";
+import { useKisiler } from "@/lib/onay";
 import { actions } from "@/lib/store";
 
 const inputType = (t?: string) =>
@@ -23,7 +24,8 @@ const inputType = (t?: string) =>
 export function AddRowDialog({ table }: { table: TableDef }) {
   const [open, setOpen] = useState(false);
   const [vals, setVals] = useState<Record<string, string>>({});
-  const [assignee, setAssignee] = useState("u1");
+  const [assignee, setAssignee] = useState("");
+  const kisiler = useKisiler();
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,9 +34,14 @@ export function AddRowDialog({ table }: { table: TableDef }) {
       const v = vals[c.key] ?? "";
       data[c.key] = c.type === "number" ? Number(v || 0) : c.type === "percent" ? Number(v || 0) / 100 : v;
     }
+    if (!assignee) {
+      toast.error("Onaylayacak sorumluyu seçin.");
+      return;
+    }
     actions.add(table.slug, data, assignee);
     toast.success("Kayıt eklendi ve onaya gönderildi.");
     setVals({});
+    setAssignee("");
     setOpen(false);
   };
 
@@ -86,12 +93,12 @@ export function AddRowDialog({ table }: { table: TableDef }) {
             <Label className="text-xs text-muted-foreground">Onaylayacak Sorumlu</Label>
             <Select value={assignee} onValueChange={setAssignee}>
               <SelectTrigger>
-                <SelectValue />
+                <SelectValue placeholder="Seçiniz" />
               </SelectTrigger>
               <SelectContent>
-                {USERS.map((u) => (
-                  <SelectItem key={u.id} value={u.id}>
-                    {u.name} — {u.role}
+                {kisiler.data?.map((k) => (
+                  <SelectItem key={k.id} value={k.adSoyad}>
+                    {k.adSoyad}
                   </SelectItem>
                 ))}
               </SelectContent>

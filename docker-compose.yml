@@ -1,17 +1,24 @@
-version: "3.8"
-
+# Yerelde veritabanini calistirir:  docker compose up -d
+# TimescaleDB, PostgreSQL'in eklentili halidir (makine zaman serisi icin, 5. faz).
 services:
   postgres:
-    image: timescale/timescaledb:latest-pg15
+    image: timescale/timescaledb:latest-pg16
     container_name: iso_postgres
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: secretpassword
-      POSTGRES_DB: unelsis_iso_db
+      POSTGRES_USER: ${DB_KULLANICI:-iso}
+      POSTGRES_PASSWORD: ${DB_SIFRE:-iso_yerel_sifre}
+      POSTGRES_DB: ${DB_ADI:-iso_db}
+      TZ: Europe/Istanbul
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_KULLANICI:-iso} -d ${DB_ADI:-iso_db}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
   pgdata:
