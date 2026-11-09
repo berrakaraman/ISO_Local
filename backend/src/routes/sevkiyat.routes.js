@@ -7,7 +7,8 @@ const { ROLLER, BIRIM_DURUM: D, OLAY } = require("../lib/sabitler");
 const { rol } = require("../middleware/auth");
 const { yeniNumara } = require("../services/numara");
 const { olayYaz, birimDurumu, izYaz } = require("../services/iz");
-const { onayOlustur } = require("../services/onay");
+const { onayOlustur, onayKontrol, onaySifirla } = require("../services/onay");
+const { yuvarla } = require("../lib/miktar");
 const { birimBul, birimGuncelle, blokeKontrol, firmaAyarlari } = require("../services/birim");
 
 const router = express.Router();
@@ -45,7 +46,12 @@ router.post(
       const F = req.ctx.firmaId;
       const mu = await bir(c, "SELECT 1 FROM musteri WHERE id = $1 AND firma_id = $2 AND aktif", [musteriId, F]);
       if (!mu) throw hatalar.gecersiz("Musteri bulunamadi");
+      if (b.urunId) {
+        const ur = await bir(c, "SELECT 1 FROM urun WHERE id = $1 AND firma_id = $2", [b.urunId, F]);
+        if (!ur) throw hatalar.gecersiz("Urun bulunamadi");
+      }
       const ayar = await firmaAyarlari(c, F);
+      const atananId = d.metin(b.atananId, "Sevkiyati onaylayacak kisi", { zorunlu: ayar.sevkiyatOnayZorunlu !== false, max: 40 });
       const no = await yeniNumara(c, F, "SV", ayar.saatDilimi);
       const yeni = await bir(
         c,
@@ -59,7 +65,6 @@ router.post(
         tablo: "sevkiyat", kayitId: yeni.id, islem: "EKLEME",
         degisiklikler: [{ alan: "sevkiyat", eski: null, yeni: `${no} - ${musteri.unvan}${yeni.siparis_no ? ` / siparis ${yeni.siparis_no}` : ""}` }],
       });
-      const atananId = d.metin(b.atananId, "Onaylayacak kisi", { zorunlu: false, max: 40 });
       yeni.onay = atananId ? await onayOlustur(c, req.ctx, { kayitTuru: "SEVKIYAT", kayitNo: no, atananId }) : null;
       return yeni;
     });
@@ -130,8 +135,10 @@ router.post(
       await c.query("INSERT INTO sevkiyat_satiri (firma_id, sevkiyat_id, birim_id, miktar) VALUES ($1,$2,$3,$4)", [F, s.id, b.id, b.miktar]);
       await birimGuncelle(c, req.ctx, b.id, { yer: `SEVK:${s.no}`, ek: { ...b.ek, oncekiDurum: b.durum, oncekiYer: b.yer } });
       if (b.durum !== D.SIPARISE_AYRILDI) await birimDurumu(c, req.ctx, b, D.SIPARISE_AYRILDI, { olayTipi: OLAY.SIPARISE_AYIRMA, aciklama: s.no });
+      // Onaylanmis yuke parca eklenirse onay gecersiz olur: onaylayan, yukun son halini gormeli
+      const onaySifirlandi = await onaySifirla(c, req.ctx, "SEVKIYAT", s.no, `${b.barkod} eklendi, yuk degisti; yeniden onay gerekli`);
       const liste = await satirlar(c, s.id);
-      return { eklenen: b.barkod, birimSayisi: liste.length, toplam: liste.reduce((a, x) => a + x.miktar, 0), satirlar: liste };
+      return { eklenen: b.barkod, birimSayisi: liste.length, toplam: yuvarla(liste.reduce((a, x) => a + x.miktar, 0)), satirlar: liste, onaySifirlandi };
     });
     res.json(sonuc);
   }),
@@ -157,7 +164,8 @@ router.post(
       const onceki = b.ek?.oncekiDurum || D.SERBEST;
       await birimGuncelle(c, req.ctx, b.id, { yer: b.ek?.oncekiYer || null });
       await birimDurumu(c, req.ctx, b, onceki, { olayTipi: OLAY.SIPARISE_AYIRMA, aciklama: `${s.no} sevkiyatindan cikarildi` });
-      return { cikarilan: b.barkod, satirlar: await satirlar(c, s.id) };
+      const onaySifirlandi = await onaySifirla(c, req.ctx, "SEVKIYAT", s.no, `${b.barkod} cikarildi, yuk degisti; yeniden onay gerekli`);
+      return { cikarilan: b.barkod, satirlar: await satirlar(c, s.id), onaySifirlandi };
     });
     res.json(sonuc);
   }),
@@ -172,8 +180,8 @@ router.post(
       const F = req.ctx.firmaId;
       const s = await sevkiyatBul(c, F, req.params.no);
       if (s.durum !== "HAZIRLANIYOR") throw hatalar.engel("Bu sevkiyat zaten kapanmis", "YANLIS_DURUM");
-      const onay = await bir(c, "SELECT durum FROM onay WHERE firma_id = $1 AND kayit_turu = 'SEVKIYAT' AND kayit_no = $2", [F, s.no]);
-      if (onay && onay.durum !== "ONAYLANDI") throw hatalar.engel(`${s.no} henuz onaylanmadi, sevk edilemez`, "ONAY_BEKLIYOR");
+      const ayar = await firmaAyarlari(c, F);
+      await onayKontrol(c, F, "SEVKIYAT", s.no, { zorunlu: ayar.sevkiyatOnayZorunlu !== false, islem: "sevk edilemez" });
       const irsaliyeNo = d.metin(req.body.irsaliyeNo ?? s.irsaliye_no, "Irsaliye no", { max: 60 });
       const liste = await satirlar(c, s.id);
       if (!liste.length) throw hatalar.engel("Sevkiyatta hic parca yok", "BOS_SEVKIYAT");

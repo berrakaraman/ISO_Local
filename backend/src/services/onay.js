@@ -5,9 +5,11 @@ const { hatalar } = require("../lib/hata");
 const { ROLLER, ONAY_DURUM: O } = require("../lib/sabitler");
 const { izYaz } = require("./iz");
 
-// Bu tur kayitlari kimler onaylayabilir (bos = herkes)
+// Bu tur kayitlari kimler onaylayabilir (bos = herkes). ADMIN her zaman onaylayabilir.
 const ONAYLAYABILIR = {
   HAMMADDE: [ROLLER.KALITE], // giris kontrolu kalite isidir
+  IS_EMRI: [ROLLER.KALITE, ROLLER.YONETIM], // uretim emrini kalite ya da yonetim onaylar (operator degil)
+  SEVKIYAT: [ROLLER.KALITE, ROLLER.YONETIM], // sevk edilecek yuku kalite ya da yonetim onaylar
   KARANTINA: [ROLLER.KALITE],
   KALITE: [ROLLER.KALITE],
 };
@@ -26,6 +28,8 @@ async function kisiBul(c, firmaId, id) {
 // Yeni kayit icin onay gorevi acar
 async function onayOlustur(c, ctx, { kayitTuru, kayitNo, atananId }) {
   const kisi = await kisiBul(c, ctx.firmaId, atananId);
+  // Dort goz kurali: kaydi giren kisi kendi kaydini onaylayamaz
+  if (kisi.id === ctx.kullaniciId) throw hatalar.gecersiz("Kendi kaydinizi kendinize onaya atayamazsiniz. Baska bir sorumlu secin.");
   if (!yetkili(kisi.roller, kayitTuru)) {
     throw hatalar.gecersiz(`${kisi.ad_soyad} bu kaydi onaylama yetkisine sahip degil (gerekli rol: ${ONAYLAYABILIR[kayitTuru].join(", ")})`);
   }
@@ -53,6 +57,7 @@ async function onayKarari(c, ctx, onay, yeniDurum, not, roller) {
     throw hatalar.engel("Bu kayit icin karar zaten verilmis", "KARAR_VERILMIS");
   }
   const admin = roller.includes(ROLLER.ADMIN);
+  if (onay.olusturan === ctx.kullaniciId) throw hatalar.yasak("Kendi girdiginiz kaydi onaylayamazsiniz (dort goz kurali).");
   if (onay.atanan !== ctx.kullaniciId && !admin) {
     throw hatalar.yasak("Bu onay size atanmamis. Yalnizca atanan kisi karar verebilir.");
   }
@@ -89,4 +94,33 @@ async function onayEsitle(c, ctx, kayitTuru, kayitNo, yeniDurum, not) {
   return onayYaz(c, ctx, o, yeniDurum, not);
 }
 
-module.exports = { onayOlustur, onayKarari, onayEsitle, ONAYLAYABILIR };
+// Bir sonraki adima gecmeden once onay var mi ve onaylanmis mi? (ornek: is emri baslatma, sevk etme)
+async function onayKontrol(c, firmaId, kayitTuru, kayitNo, { zorunlu = true, islem = "devam edilemez" } = {}) {
+  const o = await bir(c, "SELECT durum FROM onay WHERE firma_id = $1 AND kayit_turu = $2 AND kayit_no = $3", [firmaId, kayitTuru, kayitNo]);
+  if (!o) {
+    if (zorunlu) throw hatalar.engel(`${kayitNo} icin onay kaydi yok, ${islem}. Kayit bir sorumluya onaya gonderilmeli.`, "ONAY_YOK");
+    return null;
+  }
+  if (o.durum !== O.ONAYLANDI) {
+    const ad = { BEKLIYOR: "onay bekliyor", ASKIDA: "askiya alinmis", REDDEDILDI: "reddedilmis" }[o.durum] || o.durum;
+    throw hatalar.engel(`${kayitNo} ${ad}, ${islem}`, "ONAY_BEKLIYOR");
+  }
+  return o;
+}
+
+// Onaylanmis kayit sonradan degisirse onay gecersiz olur ve yeniden "Bekliyor"a doner
+async function onaySifirla(c, ctx, kayitTuru, kayitNo, not) {
+  const o = await bir(c, "SELECT * FROM onay WHERE firma_id = $1 AND kayit_turu = $2 AND kayit_no = $3 FOR UPDATE", [ctx.firmaId, kayitTuru, kayitNo]);
+  if (!o || o.durum !== O.ONAYLANDI) return false;
+  await c.query("UPDATE onay SET durum = $1, karar_veren = NULL, karar_zamani = NULL, karar_notu = $2 WHERE id = $3", [O.BEKLIYOR, not, o.id]);
+  await izYaz(c, ctx, {
+    tablo: "onay",
+    kayitId: o.id,
+    islem: "DURUM",
+    degisiklikler: [{ alan: "durum", eski: o.durum, yeni: O.BEKLIYOR }],
+    gerekce: not,
+  });
+  return true;
+}
+
+module.exports = { onayOlustur, onayKarari, onayEsitle, onayKontrol, onaySifirla, ONAYLAYABILIR, yetkili };

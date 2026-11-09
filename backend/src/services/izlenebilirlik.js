@@ -2,8 +2,10 @@
 const { bir } = require("../config/db");
 const { hatalar } = require("../lib/hata");
 const { barkodCoz } = require("../lib/barkod");
+const { LOT_SECIM, lotDengesi } = require("./denge");
+const { yuvarla: yv, esit } = require("../lib/miktar");
 
-const yuvarla = (n, h = 3) => Math.round((Number(n) || 0) * 10 ** h) / 10 ** h;
+const yuvarla = (n, h = 3) => yv(Number(n) || 0, h);
 
 const BIRIM_SECIM = `
   b.id, b.barkod, b.tip, b.durum, b.bloke, b.ilk_miktar, b.miktar, b.olcu_birimi, b.yer, b.sira, b.ek,
@@ -212,10 +214,11 @@ async function hammaddeBakiye(c, F, lotNo) {
   const m = await bir(
     c,
     `SELECT COALESCE(sum(ilk_miktar) FILTER (WHERE kaynak_birim_id IS NULL), 0) AS giris,
-            COALESCE(sum(miktar) FILTER (WHERE yer LIKE 'DEPO%' AND durum NOT IN ('RET','KARANTINA','KONTROL_BEKLIYOR')), 0) AS depoda,
+            COALESCE(sum(miktar) FILTER (WHERE yer LIKE 'DEPO%' AND durum NOT IN ('RET','KARANTINA','KONTROL_BEKLIYOR','IPTAL')), 0) AS depoda,
+            COALESCE(sum(miktar) FILTER (WHERE durum = 'IPTAL'), 0) AS iptal,
             COALESCE(sum(miktar) FILTER (WHERE yer LIKE 'DEPO%' AND durum IN ('KARANTINA','KONTROL_BEKLIYOR')), 0) AS depoda_bekleyen,
             COALESCE(sum(miktar) FILTER (WHERE durum = 'RET'), 0) AS ret,
-            COALESCE(sum(miktar) FILTER (WHERE yer LIKE 'HAT:%' AND durum NOT IN ('RET','HURDA')), 0) AS hatta
+            COALESCE(sum(miktar) FILTER (WHERE yer LIKE 'HAT:%' AND durum NOT IN ('RET','HURDA','IPTAL')), 0) AS hatta
        FROM birim WHERE lot_id = $1`,
     [lot.id],
   );
@@ -241,36 +244,33 @@ async function hammaddeBakiye(c, F, lotNo) {
     [lot.id, lot.malzeme_id],
   );
 
+  // Tuketilen hammaddenin nereye gittigi: her top icin lot dengesi (services/denge.js), metre -> kg
   let uygunKg = 0;
   let karantinaKg = 0;
   let hurdaKg = 0;
   let islemdeKg = 0;
+  let numuneKg = 0;
+  let olcumFarkiKg = 0;
   const urunler = [];
   const kararlar = [];
   for (const t of toplar.rows) {
     const pay = t.toplam_ambalaj ? t.bu_lot_ambalaj / t.toplam_ambalaj : 1;
     const kgm = t.gram_metre ? (t.gram_metre / 1000) * pay : 0;
-    const p = await bir(
-      c,
-      `SELECT COALESCE(sum(ilk_miktar) FILTER (WHERE tip = 'FG' AND durum NOT IN ('RET','HURDA') AND kaynak_birim_id IS NULL), 0) AS uygun,
-              COALESCE(sum(ilk_miktar) FILTER (WHERE tip = 'FG' AND durum IN ('RET','HURDA') AND kaynak_birim_id IS NULL), 0) AS ret,
-              COALESCE(sum(ilk_miktar) FILTER (WHERE tip = 'KR' AND durum IN ('KARAR_BEKLIYOR','YENIDEN_ISLEME')), 0) AS kr_bekleyen,
-              COALESCE(sum(ilk_miktar) FILTER (WHERE tip = 'KR' AND durum IN ('OLUMLU','SARTLI_KABUL')), 0) AS kr_olumlu,
-              COALESCE(sum(ilk_miktar) FILTER (WHERE tip = 'KR' AND durum = 'HURDA'), 0) AS kr_hurda
-         FROM birim WHERE lot_id = (SELECT lot_id FROM birim WHERE id = $1)`,
-      [t.id],
-    );
-    const kesimFiresi = (await bir(c, "SELECT COALESCE(sum(miktar),0) AS f FROM olay WHERE birim_id = $1 AND tip = 'HURDA'", [t.id])).f;
-    const kesilmemis = (await bir(c, "SELECT miktar FROM birim WHERE id = $1", [t.id])).miktar;
-    const uygunM = p.uygun + p.kr_olumlu;
-    const hurdaM = p.ret + p.kr_hurda + kesimFiresi;
+    const satir = await bir(c, `${LOT_SECIM} AND l.id = (SELECT lot_id FROM birim WHERE id = $2)`, [F, t.id]);
+    const dn = lotDengesi(satir);
+    const g = dn.dagilim;
+    const uygunM = yuvarla(g.uygun + g.kaliteBekleyen);
+    const karantinaM = yuvarla(g.parcaKarantinada + g.karantinaBekleyen);
     uygunKg += uygunM * kgm;
-    karantinaKg += p.kr_bekleyen * kgm;
-    hurdaKg += hurdaM * kgm;
-    islemdeKg += kesilmemis * kgm;
+    karantinaKg += karantinaM * kgm;
+    hurdaKg += g.hurda * kgm;
+    islemdeKg += g.kesilmemis * kgm;
+    numuneKg += g.numune * kgm;
+    olcumFarkiKg -= dn.olcumFazlasi * kgm;
     urunler.push({
-      lotNo: t.barkod, metraj: t.ilk_miktar, pay: yuvarla(pay, 3), tahmini: pay < 1,
-      uygunMetre: uygunM, karantinaMetre: p.kr_bekleyen, hurdaMetre: hurdaM, kesilmemisMetre: kesilmemis,
+      lotNo: t.barkod, metraj: t.ilk_miktar, toplamMetre: dn.toplam, pay: yuvarla(pay, 3), tahmini: pay < 1,
+      uygunMetre: uygunM, karantinaMetre: karantinaM, hurdaMetre: g.hurda, kesilmemisMetre: g.kesilmemis, numuneMetre: g.numune,
+      dengeTutuyor: dn.tutuyor, dengeFarki: dn.fark,
     });
     const kr = await c.query(
       `SELECT b.barkod, b.ilk_miktar, b.olcu_birimi, b.durum, b.ek, o.zaman AS karar_zamani, o.aciklama AS karar_notu,
@@ -284,9 +284,11 @@ async function hammaddeBakiye(c, F, lotNo) {
     kr.rows.forEach((x) => kararlar.push({ ...x, fgLotNo: t.barkod }));
   }
 
+  // Hammadde kontrolu: giris = depoda (kullanilabilir + bekleyen + ret) + iptal + hatta + tuketilen + dogrudan hurda
   const giris = m.giris;
   const depoda = m.depoda + m.depoda_bekleyen + m.ret;
-  const kontrolToplam = depoda + m.hatta + o.tuketilen + o.dogrudan_hurda;
+  const kontrolToplam = depoda + m.iptal + m.hatta + o.tuketilen + o.dogrudan_hurda;
+  const dagilimToplam = uygunKg + karantinaKg + hurdaKg + islemdeKg + numuneKg + olcumFarkiKg;
   return {
     lot,
     bakiye: {
@@ -302,11 +304,15 @@ async function hammaddeBakiye(c, F, lotNo) {
         karantinada: yuvarla(karantinaKg),
         hurda: yuvarla(hurdaKg),
         kesimBekleyen: yuvarla(islemdeKg),
-        aciklanamayan: yuvarla(o.tuketilen - uygunKg - karantinaKg - hurdaKg - islemdeKg),
+        numune: yuvarla(numuneKg),
+        olcumFarki: yuvarla(olcumFarkiKg),
+        // Recetedeki gram/metreye gore beklenenden fazla harcanan hammadde (proses kaybi; is emri dengesinde aciklanir)
+        aciklanamayan: yuvarla(o.tuketilen - dagilimToplam),
         tahmini: urunler.some((u) => u.tahmini),
       },
       dogrudanHurda: yuvarla(o.dogrudan_hurda),
-      kontrol: { tutuyor: Math.abs(giris - kontrolToplam) < 0.001, fark: yuvarla(giris - kontrolToplam) },
+      iptal: yuvarla(m.iptal),
+      kontrol: { tutuyor: esit(giris, kontrolToplam), fark: yuvarla(giris - kontrolToplam) },
     },
     urunler,
     karantinaKararlari: kararlar,

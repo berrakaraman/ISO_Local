@@ -54,7 +54,8 @@ router.get(
         return res.json(await gecmisGetir(F, [["lot", l.id]], { lotId: l.id }));
       }
       case "KARANTINA": {
-        const b = await bir(pool, "SELECT id FROM birim WHERE firma_id = $1 AND barkod = $2 AND tip = 'KR'", [F, no]);
+        // Karantina kaydi: uretimde ayrilan parca (KR) ya da metrajda karantinaya alinan top (FG_LOT)
+        const b = await bir(pool, "SELECT id FROM birim WHERE firma_id = $1 AND barkod = $2 AND tip IN ('KR','FG_LOT')", [F, no]);
         if (!b) throw hatalar.bulunamadi("Karantina kaydi bulunamadi");
         return res.json(await gecmisGetir(F, [], { birimIds: [b.id] }));
       }

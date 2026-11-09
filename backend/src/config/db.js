@@ -7,6 +7,9 @@ types.setTypeParser(1700, (v) => (v === null ? null : Number(v)));
 // bigint (count, bigserial) sayi olarak gelsin
 types.setTypeParser(20, (v) => (v === null ? null : Number(v)));
 
+// date kolonlari 'YYYY-AA-GG' metni olarak gelsin (Date'e cevrilirse saat dilimi yuzunden bir gun kayabilir)
+types.setTypeParser(1082, (v) => v);
+
 const pool = new Pool({ connectionString: env.databaseUrl, max: 10 });
 
 pool.on("error", (err) => console.error("[DB] beklenmeyen hata:", err.message));

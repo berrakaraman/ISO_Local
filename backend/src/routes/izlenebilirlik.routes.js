@@ -53,7 +53,9 @@ router.get(
 router.post(
   "/birimler/:barkod/etiket",
   sar(async (req, res) => {
-    const neden = d.metin(req.body.neden, "Neden", { zorunlu: false, max: 200 }) || "YENIDEN_BASKI";
+    // Yeniden baskinin nedeni zorunlu (ayni barkodlu iki etiket dolasabilir; neden izlenmeli)
+    const neden = d.metin(req.body.neden, "Yeniden baski nedeni", { max: 200 });
+    if (neden.length < 3) throw hatalar.gecersiz("Yeniden baski nedeni en az 3 karakter olmali");
     const sonuc = await tx(async (c) => {
       const b = await birimBul(c, req.ctx.firmaId, req.params.barkod);
       const etiket = await etiketBas(c, req.ctx, b.id, neden);
@@ -77,6 +79,17 @@ router.post(
       const b = await birimBul(c, F, req.body.barkod || req.params.barkod);
       const aktif = await bir(c, "SELECT 1 FROM is_emri_baglama WHERE birim_id = $1 AND cikarma_zamani IS NULL", [b.id]);
       if (aktif) throw hatalar.engel(`${b.barkod} su an bir is emrine bagli`, "ZATEN_BAGLI");
+      // Yer tipi ile birimin durumu uyusmali: onaysiz/karantinadaki malzeme rafa, numune disindaki sey numune dolabina konmaz
+      const KULLANILABILIR = { RM: [D.KABUL, D.KONTROL_BEKLIYOR], WIP: [D.KABUL], FG: [D.SERBEST, D.DEPODA, D.SIPARISE_AYRILDI] };
+      if (yer.tip === "RAF" && !(KULLANILABILIR[b.tip] || []).includes(b.durum)) {
+        throw hatalar.engel(`${b.barkod} rafa konamaz (durum: ${b.durum}). Onaysiz ya da karantinadaki malzeme karantina alanina konur.`, "RAFA_UYGUN_DEGIL");
+      }
+      if (String(b.yer || "").startsWith("HAT:")) throw hatalar.engel(`${b.barkod} hatta. Hattaki ambalaj 'Iade' ile depoya alinir (kalan miktar tartilir).`, "HATTA");
+      if (yer.tip === "NUMUNE" && b.tip !== "NM") throw hatalar.engel("Numune dolabina yalnizca sahit numune konur", "RAFA_UYGUN_DEGIL");
+      if (b.tip === "NM" && yer.tip !== "NUMUNE") throw hatalar.engel("Sahit numune yalnizca numune dolabina konur", "RAFA_UYGUN_DEGIL");
+      if ([D.SEVK_EDILDI, D.IPTAL, D.TUKENDI, D.HURDA, D.BOLUNDU, D.RET, D.IMHA_EDILDI].includes(b.durum)) {
+        throw hatalar.engel(`${b.barkod} artik fiziksel olarak depoda degil (durum: ${b.durum})`, "YANLIS_DURUM");
+      }
       const onek = yer.tip === "NUMUNE" ? "NUMUNE" : yer.tip === "KARANTINA" ? "KARANTINA" : "DEPO";
       const g = await birimGuncelle(c, req.ctx, b.id, { yer: `${onek}:${yer.kod}` });
       await olayYaz(c, req.ctx, { tip: OLAY.YERLESTIRME, birimId: b.id, aciklama: yer.kod });

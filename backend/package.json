@@ -13,7 +13,9 @@
     "db:migrate": "node src/db/migrate.js",
     "db:seed": "node src/db/seed.js",
     "db:reset": "node src/db/migrate.js --sifirla && node src/db/seed.js",
-    "test:akis": "node scripts/akis-testi.js"
+    "test:akis": "node scripts/akis-testi.js",
+    "yedekle": "node scripts/yedekle.js",
+    "geri-yukle": "node scripts/geri-yukle.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

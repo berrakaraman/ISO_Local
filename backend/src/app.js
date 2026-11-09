@@ -36,6 +36,7 @@ app.use("/api", require("./routes/izlenebilirlik.routes"));
 app.use("/api/panel", require("./routes/panel.routes"));
 app.use("/api/onaylar", require("./routes/onay.routes"));
 app.use("/api/gecmis", require("./routes/gecmis.routes"));
+app.use("/api/kys", require("./routes/kys.routes").router);
 
 app.use(bulunamadi);
 app.use(hataYakala);

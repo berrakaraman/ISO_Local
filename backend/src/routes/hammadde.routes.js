@@ -12,6 +12,7 @@ const { birimBul, birimOlustur, bagla, birimGuncelle, blokeKontrol, firmaAyarlar
 const { hammaddeBakiye } = require("../services/izlenebilirlik");
 const { hammaddeKarari, hammaddeIptal } = require("../services/hammadde");
 const { onayOlustur } = require("../services/onay");
+const { yuvarla, sifirMi } = require("../lib/miktar");
 
 const router = express.Router();
 
@@ -35,7 +36,8 @@ router.post(
     d.dizi(ambalajlar, "Ambalajlar", { min: 1, max: 200 });
     ambalajlar = ambalajlar.map((m, i) => d.sayi(m, `${i + 1}. ambalaj miktari`, { pozitif: true }));
     const depoYeri = b.depoYeri ? d.kod(b.depoYeri, "Depo yeri") : null;
-    const atananId = d.metin(b.atananId, "Onaylayacak kisi", { zorunlu: false, max: 40 });
+    // Giris kontrolu her zaman kaliteye gider; atanan kisi formdaki "Sorumlu"dur (zorunlu)
+    const atananId = d.metin(b.atananId, "Giris kontrolunu yapacak kalite sorumlusu", { max: 40 });
     const aciklama = d.metin(b.aciklama, "Aciklama", { zorunlu: false, max: 1000 });
 
     const sonuc = await tx(async (c) => {
@@ -81,7 +83,7 @@ router.post(
         ],
         gerekce: aciklama,
       });
-      const onay = atananId ? await onayOlustur(c, req.ctx, { kayitTuru: "HAMMADDE", kayitNo: lotNo, atananId }) : null;
+      const onay = await onayOlustur(c, req.ctx, { kayitTuru: "HAMMADDE", kayitNo: lotNo, atananId });
       return { lot, birimler, etiketler, onay };
     });
     res.status(201).json(sonuc);
@@ -119,25 +121,30 @@ router.post(
       if (req.body.isEmriNo) {
         isEmri = await bir(c, "SELECT * FROM is_emri WHERE firma_id = $1 AND no = $2", [F, String(req.body.isEmriNo).toUpperCase()]);
         if (!isEmri) throw hatalar.bulunamadi("Is emri bulunamadi");
+        if (!["PLANLANDI", "ILK_PARCA_BEKLIYOR", "URETIMDE", "DURAKLATILDI"].includes(isEmri.durum)) {
+          throw hatalar.engel(`${isEmri.no} kapanmis bir is emri (durum: ${isEmri.durum}), malzeme cekilemez`, "YANLIS_DURUM");
+        }
         makine = await bir(c, "SELECT * FROM makine WHERE id = $1", [isEmri.makine_id]);
       } else {
         const kod = d.kod(req.body.makineKodu, "Makine kodu ya da is emri");
         makine = await bir(c, "SELECT * FROM makine WHERE firma_id = $1 AND kod = $2 AND aktif", [F, kod]);
         if (!makine) throw hatalar.bulunamadi("Makine bulunamadi");
       }
-      const miktar = req.body.miktar === undefined || req.body.miktar === "" ? birim.miktar : d.sayi(req.body.miktar, "Miktar", { pozitif: true });
-      if (miktar > birim.miktar) throw hatalar.engel(`Ambalajda ${birim.miktar} ${birim.olcu_birimi} var, ${miktar} cekilemez`, "YETERSIZ_MIKTAR");
+      const mevcut = yuvarla(birim.miktar);
+      const miktar = req.body.miktar === undefined || req.body.miktar === "" ? mevcut : yuvarla(d.sayi(req.body.miktar, "Miktar", { pozitif: true }));
+      if (miktar > mevcut) throw hatalar.engel(`Ambalajda ${mevcut} ${birim.olcu_birimi} var, ${miktar} cekilemez`, "YETERSIZ_MIKTAR");
+      if (String(birim.yer || "").startsWith("HAT:")) throw hatalar.engel(`${birim.barkod} zaten hatta (${birim.yer}). Once depoya iade edin.`, "ZATEN_HATTA");
 
       let cekilen = birim;
       let etiket = null;
-      if (miktar < birim.miktar) {
+      if (miktar < mevcut) {
         // Kismi cekis: ayni lot altinda yeni ambalaj numarasi
         const { barkod, sira } = await altNumara(c, F, birim.lot_no);
         cekilen = await birimOlustur(c, req.ctx, {
           barkod, sira, tip: birim.tip, lotId: birim.lot_id, malzemeId: birim.malzeme_id, miktar,
           olcuBirimi: birim.olcu_birimi, durum: D.KABUL, yer: `HAT:${makine.kod}`, kaynakBirimId: birim.id,
         });
-        await birimGuncelle(c, req.ctx, birim.id, { miktar: birim.miktar - miktar });
+        await birimGuncelle(c, req.ctx, birim.id, { miktar: yuvarla(mevcut - miktar) });
         await bagla(c, req.ctx, birim.id, cekilen.id, "BOLUNDU", miktar);
         await olayYaz(c, req.ctx, { tip: OLAY.BOLME, birimId: birim.id, karsiBirimId: cekilen.id, miktar, olcuBirimi: birim.olcu_birimi });
         etiket = await etiketBas(c, req.ctx, cekilen.id);
@@ -148,7 +155,7 @@ router.post(
         tip: OLAY.CEKIS, birimId: cekilen.id, isEmriId: isEmri?.id, miktar, olcuBirimi: birim.olcu_birimi,
         aciklama: `Depo -> ${makine.kod}${isEmri ? ` (${isEmri.no})` : ""}`,
       });
-      return { birim: cekilen, makine: makine.kod, isEmriNo: isEmri?.no || null, etiket, kalanAnaAmbalaj: miktar < birim.miktar ? birim.miktar - miktar : 0 };
+      return { birim: cekilen, makine: makine.kod, isEmriNo: isEmri?.no || null, etiket, kalanAnaAmbalaj: miktar < mevcut ? yuvarla(mevcut - miktar) : 0 };
     });
     res.json(sonuc);
   }),
@@ -164,19 +171,22 @@ router.post(
       const birim = await birimBul(c, req.ctx.firmaId, req.body.barkod, { tipler: ["RM", "WIP"] });
       const aktif = await bir(c, "SELECT 1 FROM is_emri_baglama WHERE birim_id = $1 AND cikarma_zamani IS NULL", [birim.id]);
       if (aktif) throw hatalar.engel("Bu ambalaj bir is emrine bagli. Iade, is emri bitirilirken yapilir.", "ZATEN_BAGLI");
-      const kalan = req.body.kalanMiktar === undefined ? birim.miktar : d.sayi(req.body.kalanMiktar, "Kalan miktar", { min: 0 });
-      if (kalan > birim.miktar) throw hatalar.gecersiz(`Kalan miktar mevcut miktardan (${birim.miktar}) fazla olamaz`);
+      if (!String(birim.yer || "").startsWith("HAT:")) throw hatalar.engel(`${birim.barkod} hatta degil (yer: ${birim.yer || "-"}), iade edilemez`, "HATTA_DEGIL");
+      if ([D.IPTAL, D.TUKENDI, D.HURDA].includes(birim.durum)) throw hatalar.engel(`${birim.barkod} iade edilemez (durum: ${birim.durum})`, "YANLIS_DURUM");
+      const mevcut = yuvarla(birim.miktar);
+      const kalan = req.body.kalanMiktar === undefined || req.body.kalanMiktar === "" ? mevcut : yuvarla(d.sayi(req.body.kalanMiktar, "Kalan miktar", { min: 0 }));
+      if (kalan > mevcut) throw hatalar.gecersiz(`Kalan miktar mevcut miktardan (${mevcut}) fazla olamaz`);
       const depoYeri = req.body.depoYeri ? d.kod(req.body.depoYeri, "Depo yeri") : null;
-      if (kalan < birim.miktar) {
+      if (kalan < mevcut) {
         await olayYaz(c, req.ctx, {
-          tip: OLAY.HURDA, birimId: birim.id, miktar: birim.miktar - kalan, olcuBirimi: birim.olcu_birimi,
-          aciklama: "Iade sirasinda tartimda eksik cikti",
+          tip: OLAY.HURDA, birimId: birim.id, miktar: yuvarla(mevcut - kalan), olcuBirimi: birim.olcu_birimi,
+          aciklama: "Iade sirasinda tartimda eksik cikti", veri: { neden: "IADE_EKSIGI" },
         });
       }
       const g = await birimGuncelle(c, req.ctx, birim.id, {
         miktar: kalan,
         yer: depoYeri ? `DEPO:${depoYeri}` : "DEPO",
-        durum: kalan === 0 ? D.TUKENDI : birim.durum,
+        durum: sifirMi(kalan) ? D.TUKENDI : birim.durum,
       });
       await olayYaz(c, req.ctx, { tip: OLAY.IADE, birimId: birim.id, miktar: kalan, olcuBirimi: birim.olcu_birimi, aciklama: "Hattan depoya" });
       return g;

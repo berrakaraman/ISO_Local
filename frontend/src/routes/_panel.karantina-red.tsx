@@ -1,6 +1,7 @@
 // F-04 Karantina / Red: uretimde ayrilan parcalar (karantina etiketi basilir) ve kalitenin kararlari.
 // Karar: Olumlu / Sartli kabul -> parca yeni FG numarasiyla kullanilabilir olur; Yeniden isleme; Hurda.
 // Sorumlu/Onay sutunlari formun kendi kararini gosterir: karar kalitenindir.
+// Metraj olcumu tolerans disi cikan TOP da burada listelenir; karar: tekrar olc ve kes / sartli kabul / hurda.
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -22,15 +23,22 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/_panel/karantina-red")({ component: KarantinaRed });
 
 type KR = {
-  barkod: string; ilkMiktar: number; olcuBirimi: string; durum: string; ek: { hataKodu?: string; hataAciklama?: string; not?: string };
+  barkod: string; tip: "KR" | "FG_LOT"; ilkMiktar: number; miktar: number; olcuBirimi: string; durum: string;
+  ek: { hataKodu?: string; hataAciklama?: string; not?: string; karantina?: { neden?: string } };
   olusturmaZamani: string; urunKod: string | null; lotNo: string | null; isEmriNo: string | null; makineKod: string | null;
   kaydedenAd: string | null; kaydedenSicil: string | null;
   kararZamani: string | null; kararNotu: string | null; kararVerenAd: string | null; yeniBarkod: string | null;
 };
 
 const BEKLEYEN = ["KARAR_BEKLIYOR", "YENIDEN_ISLEME"];
+// Karar bekliyor mu? Parca icin KARAR_BEKLIYOR/YENIDEN_ISLEME, top icin KARANTINA
+const bekliyorMu = (k?: KR) => !!k && (k.tip === "FG_LOT" ? k.durum === "KARANTINA" : BEKLEYEN.includes(k.durum));
+const miktarOf = (k: KR) => (k.tip === "FG_LOT" && k.durum === "KARANTINA" ? k.miktar : k.ilkMiktar);
 const ONAY_GIBI: Record<string, ["yesil" | "turuncu" | "kirmizi" | "gri", string]> = {
   KARAR_BEKLIYOR: ["gri", "Bekliyor"],
+  KARANTINA: ["gri", "Bekliyor · top"],
+  KESIM_BEKLIYOR: ["yesil", "Onaylandı · kesime döndü"],
+  KESILDI: ["yesil", "Onaylandı · kesildi"],
   YENIDEN_ISLEME: ["turuncu", "Askıda · yeniden işleme"],
   OLUMLU: ["yesil", "Onaylandı · olumlu"],
   SARTLI_KABUL: ["yesil", "Onaylandı · şartlı"],
@@ -61,10 +69,10 @@ function KarantinaRed() {
           "Ürün Kodu": k.urunKod,
           "Lot No": k.lotNo || "Top bitmedi",
           Makine: k.makineKod,
-          "Sepet/Ayrım": tr(k.ek?.not) || "Karantina alanı",
-          "Hata Kodu": k.ek?.hataKodu,
-          "Hata Açıklaması": tr(k.ek?.hataAciklama),
-          Miktar: k.ilkMiktar,
+          "Sepet/Ayrım": k.tip === "FG_LOT" ? "Top (metraj)" : tr(k.ek?.not) || "Karantina alanı",
+          "Hata Kodu": k.tip === "FG_LOT" ? "METRAJ" : k.ek?.hataKodu,
+          "Hata Açıklaması": k.tip === "FG_LOT" ? tr(k.ek?.karantina?.neden) || "Metraj ölçümü tolerans dışı" : tr(k.ek?.hataAciklama),
+          Miktar: miktarOf(k),
           Birim: k.olcuBirimi,
           Karar: durumAdi(k.durum),
           "Karar Veren": tr(k.kararVerenAd),
@@ -97,9 +105,9 @@ function KarantinaRed() {
             const [renk, yazi] = ONAY_GIBI[k.durum] || ["gri", durumAdi(k.durum)];
             return <DurumRozeti renk={renk} alt={k.kararVerenAd ? `${tr(k.kararVerenAd)} · ${tarihSaat(k.kararZamani)}` : undefined}>{yazi}</DurumRozeti>;
           }}
-          bendeMi={(s) => kalite && BEKLEYEN.includes(bul(s.anahtar)!.durum)}
+          bendeMi={(s) => kalite && bekliyorMu(bul(s.anahtar))}
           ekIslem={(s) =>
-            kalite && BEKLEYEN.includes(bul(s.anahtar)!.durum) ? (
+            kalite && bekliyorMu(bul(s.anahtar)) ? (
               <SatirDugmesi vurgu onClick={() => setSecili({ no: s.anahtar, karar: true })}>
                 <Gavel className="h-3.5 w-3.5" /> Karar ver
               </SatirDugmesi>
@@ -113,6 +121,7 @@ function KarantinaRed() {
             )
           }
         />
+        <ParcaKarantinasi kalite={kalite} />
       </div>
       {yeni && <YeniKarantina kapat={() => setYeni(false)} />}
       {secili && <KarantinaAyrinti kr={bul(secili.no)} no={secili.no} kararAcik={!!secili.karar} kapat={() => setSecili(null)} />}
@@ -207,7 +216,8 @@ function KarantinaAyrinti({ kr, no, kararAcik, kapat }: { kr?: KR; no: string; k
   const [karar, setKarar] = useState<string>("");
   const [not, setNot] = useState("");
   const [yeniEtiket, setYeniEtiket] = useState<string | null>(null);
-  const bekliyor = !!kr && BEKLEYEN.includes(kr.durum);
+  const bekliyor = bekliyorMu(kr);
+  const top = kr?.tip === "FG_LOT";
   const kalite = rolVar(oturum, "KALITE");
   const m = useMutation({
     mutationFn: () => api<any>(`/kalite/karantina/${no}/karar`, { govde: { karar, not: not || undefined } }),
@@ -220,7 +230,11 @@ function KarantinaAyrinti({ kr, no, kararAcik, kapat }: { kr?: KR; no: string; k
     },
     onError: (e) => toast.error(hataMesaji(e, "Karar kaydedilemedi.")),
   });
-  const secenekler: [string, string, string, string][] = [
+  const secenekler: [string, string, string, string][] = top ? [
+    ["OLUMLU", "Tekrar ölç ve kes", "Ölçüm hatası; top kesime döner, metraj yeniden ölçülür", "border-uygun bg-uygun-acik text-uygun"],
+    ["SARTLI_KABUL", "Şartlı kabul", "Ölçü dışı ama kabul; kesimde ölçüm kaydedilir, kesim durmaz", "border-uygun bg-uygun-acik text-uygun"],
+    ["HURDA", "Hurda", "Topun kalan metrajının tamamı hurdaya düşer", "border-unity bg-sorun-acik text-unity-koyu"],
+  ] : [
     ["OLUMLU", "Olumlu", "Parça kullanılabilir; yeni barkodla etiketlenir", "border-uygun bg-uygun-acik text-uygun"],
     ["SARTLI_KABUL", "Şartlı kabul", "Kullanılabilir, şartı not edilir", "border-uygun bg-uygun-acik text-uygun"],
     ...(kr?.durum === "KARAR_BEKLIYOR" ? ([["YENIDEN_ISLEME", "Yeniden işleme", "Düzeltilip tekrar değerlendirilir", "border-dikkat bg-dikkat-acik text-dikkat"]] as [string, string, string, string][]) : []),
@@ -231,7 +245,12 @@ function KarantinaAyrinti({ kr, no, kararAcik, kapat }: { kr?: KR; no: string; k
   return (
     <Dialog open onOpenChange={(o) => !o && kapat()}>
       <DialogContent className="max-h-[94vh] max-w-5xl overflow-y-auto p-0" onOpenAutoFocus={(e) => e.preventDefault()}>
-        <PencereBasligi ust="F-04 · Karantina parçası" baslik={no} mono aciklama={kr ? `${kr.ek?.hataKodu} ${tr(kr.ek?.hataAciklama)} · iş emri ${kr.isEmriNo} · ${kr.makineKod}` : ""}>
+        <PencereBasligi
+          ust={top ? "F-04 · Karantinadaki top" : "F-04 · Karantina parçası"}
+          baslik={no}
+          mono
+          aciklama={kr ? `${top ? tr(kr.ek?.karantina?.neden) || "Metraj ölçümü tolerans dışı" : `${kr.ek?.hataKodu} ${tr(kr.ek?.hataAciklama)}`} · iş emri ${kr.isEmriNo} · ${kr.makineKod}` : ""}
+        >
           {kr && <DurumRozeti renk={(ONAY_GIBI[kr.durum] || ["gri"])[0]}>{durumAdi(kr.durum)}</DurumRozeti>}
           <AkisDugmesi barkod={no} />
         </PencereBasligi>
@@ -260,7 +279,7 @@ function KarantinaAyrinti({ kr, no, kararAcik, kapat }: { kr?: KR; no: string; k
               {yeniEtiket && <EtiketListesi barkodlar={[yeniEtiket]} baslik="Parçanın yeni etiketi: eski karantina etiketinin üstüne yapıştırın" />}
               <BilgiKutulari
                 kutular={[
-                  ["Miktar", `${sayi(kr.ilkMiktar)} ${kr.olcuBirimi}`],
+                  ["Miktar", `${sayi(miktarOf(kr))} ${kr.olcuBirimi}`],
                   ["Ayıran", tr(kr.kaydedenAd) || "—"],
                   ["Lot", kr.lotNo || "—"],
                   ["Karar", durumAdi(kr.durum)],
@@ -283,5 +302,66 @@ function KarantinaAyrinti({ kr, no, kararAcik, kapat }: { kr?: KR; no: string; k
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+// Son kontrolde karantinaya alinan ya da musteriden iade gelen mamul parcalar. Karar son kontrolde: serbest ya da ret (hurda).
+type ParcaKr = {
+  barkod: string; miktar: number; olcuBirimi: string; bloke: boolean; lotNo: string; urunKod: string;
+  kaynak: string | null; aciklama: string | null; sikayetNo: string | null; musteri: string | null; guncellemeZamani: string;
+};
+function ParcaKarantinasi({ kalite }: { kalite: boolean }) {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["kalite", "bekleyenler"], queryFn: () => api<{ parcaKarantina: ParcaKr[] }>("/kalite/bekleyenler"), refetchInterval: 20_000 });
+  const [karar, setKarar] = useState<{ barkod: string; karar: "SERBEST" | "RET"; not: string } | null>(null);
+  const m = useMutation({
+    mutationFn: () => api("/kalite/son-kontrol", { govde: { barkodlar: [karar!.barkod], karar: karar!.karar, not: karar!.not || undefined } }),
+    onSuccess: () => {
+      toast.success(karar!.karar === "SERBEST" ? `${karar!.barkod} serbest bırakıldı` : `${karar!.barkod} reddedildi, metresi hurdaya yazıldı`);
+      setKarar(null);
+      qc.invalidateQueries();
+    },
+    onError: (e) => toast.error(hataMesaji(e, "Karar kaydedilemedi.")),
+  });
+  const liste = q.data?.parcaKarantina || [];
+  if (!liste.length) return null;
+  return (
+    <Bolum baslik={<><ShieldAlert className="h-4 w-4 text-unity" /> Karantinadaki mamul parçalar (son kontrol / müşteri iadesi)</>} className="mt-6 bg-white">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-tas-200 text-left text-[11px] uppercase tracking-wider text-tas-400">
+            <th className="px-2 py-2">Parça</th><th className="px-2 py-2">Lot</th><th className="px-2 py-2 text-right">Miktar</th>
+            <th className="px-2 py-2">Kaynak</th><th className="px-2 py-2">Not</th><th className="px-2 py-2" />
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-tas-100">
+          {liste.map((r) => (
+            <tr key={r.barkod} className="align-top">
+              <td className="px-2 py-2 font-mono text-xs font-semibold">{r.barkod}{r.bloke && <span className="ml-1 text-unity">BLOKE</span>}</td>
+              <td className="px-2 py-2 font-mono text-xs">{r.lotNo}</td>
+              <td className="sayi px-2 py-2 text-right">{sayi(r.miktar)} {r.olcuBirimi}</td>
+              <td className="px-2 py-2 text-xs">{r.kaynak === "MUSTERI_IADESI" ? `Müşteri iadesi · ${tr(r.musteri)} · ${r.sikayetNo}` : "Son kontrol"}</td>
+              <td className="px-2 py-2 text-xs text-tas-500">{tr(r.aciklama)}</td>
+              <td className="px-2 py-2">
+                {kalite &&
+                  (karar?.barkod === r.barkod ? (
+                    <div className="flex min-w-[320px] gap-2">
+                      <input className={girdi} autoFocus placeholder={karar.karar === "RET" ? "Ret nedeni (zorunlu)" : "Not"} value={karar.not} onChange={(e) => setKarar({ ...karar, not: e.target.value })} />
+                      <Button size="sm" disabled={m.isPending || (karar.karar === "RET" && karar.not.trim().length < 3)} onClick={() => m.mutate()}>
+                        {karar.karar === "SERBEST" ? "Serbest" : "Reddet"}
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex gap-1.5">
+                      <SatirDugmesi onClick={() => setKarar({ barkod: r.barkod, karar: "SERBEST", not: "" })} title={r.bloke ? "Bloke parça serbest bırakılamaz" : undefined}>Serbest</SatirDugmesi>
+                      <SatirDugmesi vurgu onClick={() => setKarar({ barkod: r.barkod, karar: "RET", not: "" })}>Reddet</SatirDugmesi>
+                    </div>
+                  ))}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Bolum>
   );
 }

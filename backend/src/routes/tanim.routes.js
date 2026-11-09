@@ -19,7 +19,13 @@ const TURLER = {
     sirala: "kod",
     alanlar: { kod: "kod", ad: "metin", tip: ["ORGU", "EKSTRUZYON", "METRAJ", "MASURA", "DIGER"], planX: "sayi?", planY: "sayi?" },
   },
-  malzemeler: { tablo: "malzeme", sirala: "kod", alanlar: { kod: "kod", ad: "metin", olcuBirimi: "metin?" } },
+  malzemeler: {
+    tablo: "malzeme",
+    sirala: "kod",
+    alanlar: {
+      kod: "kod", ad: "metin", olcuBirimi: "metin?",
+    },
+  },
   tedarikciler: { tablo: "tedarikci", sirala: "unvan", alanlar: { unvan: "metin", onayDurumu: ["ONAYLI", "SARTLI", "ASKIDA"] } },
   musteriler: { tablo: "musteri", sirala: "unvan", alanlar: { unvan: "metin", crmRef: "metin?" } },
   urunler: {
@@ -61,7 +67,10 @@ function alanlariOku(tur, govde, kismi) {
     else if (t === "kod") deger = v === undefined && kismi ? undefined : d.kod(v, ad);
     else if (t === "sayi") deger = d.sayi(v, ad, { zorunlu: !istege && !kismi });
     else if (t === "uuid") deger = d.metin(v, ad, { zorunlu: !kismi, max: 40 });
+    else if (t === "bool") deger = v === undefined || v === null || v === "" ? (kismi ? undefined : null) : d.bool(v);
     else deger = d.metin(v, ad, { zorunlu: !istege && !kismi });
+    // Yeni kayitta bos birakilan istege bagli alan gonderilmez: veritabanindaki varsayilan (ornek: olcu birimi 'm') kullanilir
+    if (deger === null && !kismi) continue;
     if (deger !== undefined) sonuc[kolon(ad)] = deger;
   }
   if (!tur.aktifYok && "aktif" in govde) sonuc.aktif = d.bool(govde.aktif);
@@ -183,6 +192,117 @@ router.patch(
   }),
 );
 
+// Tanimlarin mantik kontrolu (kayit birlesik haliyle kontrol edilir: PATCH'te eski + yeni)
+async function tanimKontrol(c, tabloAdi, F, k) {
+  const sahip = async (tablo, id, ad) => {
+    if (!id) return;
+    const r = await bir(c, `SELECT 1 FROM ${tablo} WHERE id = $1 AND firma_id = $2`, [id, F]);
+    if (!r) throw hatalar.gecersiz(`${ad} bulunamadi`);
+  };
+  const num = (v) => (v === null || v === undefined ? null : Number(v));
+  if (tabloAdi === "karakteristik") {
+    await sahip("urun", k.urun_id, "Urun");
+    const [alt, ust, nom] = [num(k.alt_sinir), num(k.ust_sinir), num(k.nominal)];
+    if (alt === null && ust === null) throw hatalar.gecersiz("Karakteristik icin en az bir sinir (alt ya da ust) girilmeli");
+    if (alt !== null && ust !== null && alt > ust) throw hatalar.gecersiz(`Alt sinir (${alt}) ust sinirdan (${ust}) buyuk olamaz`);
+    if (nom !== null && ((alt !== null && nom < alt) || (ust !== null && nom > ust))) throw hatalar.gecersiz(`Nominal (${nom}) sinirlarin disinda`);
+  }
+  if (tabloAdi === "recete") {
+    await sahip("urun", k.urun_id, "Urun");
+    await sahip("malzeme", k.malzeme_id, "Malzeme");
+    if (!(num(k.gram_metre) > 0)) throw hatalar.gecersiz("Gram/metre sifirdan buyuk olmali");
+  }
+  if (tabloAdi === "makine") {
+    for (const [ad, x] of [["Plan X", num(k.plan_x)], ["Plan Y", num(k.plan_y)]]) {
+      if (x !== null && (x < 0 || x > 100)) throw hatalar.gecersiz(`${ad} 0 ile 100 arasinda olmali (yerlesim planinda yuzde)`);
+    }
+  }
+  if (tabloAdi === "urun") {
+    if (k.kesim_boyu !== null && k.kesim_boyu !== undefined && !(num(k.kesim_boyu) > 0)) throw hatalar.gecersiz("Kesim boyu sifirdan buyuk olmali");
+    if (k.numune_boyu !== null && k.numune_boyu !== undefined && !(num(k.numune_boyu) > 0)) throw hatalar.gecersiz("Numune boyu sifirdan buyuk olmali");
+  }
+}
+
+// ---- Firma ayarlari (yalnizca ADMIN) ----
+// Her anahtar dogrulanir; bilinmeyen anahtar kabul edilmez. Her degisiklik izlenir.
+const AYAR_TURU = {
+  dengeToleransiYuzde: ["sayi", 0, 50],
+  kesimToleransiYuzde: ["sayi", 0, 10],
+  numuneSaklamaYil: ["sayi", 0, 30],
+  prosesOlcumAraligiDk: ["sayi", 0, 1440],
+  isEmriOnayZorunlu: ["bool"],
+  sevkiyatOnayZorunlu: ["bool"],
+  numuneZorunlu: ["bool"],
+  olcumAletiZorunlu: ["bool"],
+  ilkParcaOperatorOnaylayabilir: ["bool"],
+  vardiyalar: ["vardiya"],
+  kpiHedefleri: ["kpi"],
+};
+const SAAT = /^(([01]\d|2[0-3]):[0-5]\d|24:00)$/;
+function ayarOku(ad, v) {
+  const [tip, min, max] = AYAR_TURU[ad];
+  if (tip === "sayi") return d.sayi(v, ad, { min, max });
+  if (tip === "bool") return d.bool(v);
+  if (tip === "vardiya") {
+    const l = d.dizi(v, "Vardiyalar", { min: 1, max: 6 }).map((x, i) => {
+      const bas = d.metin(x?.bas, `${i + 1}. vardiya baslangici`, { max: 5 });
+      const bit = d.metin(x?.bit, `${i + 1}. vardiya bitisi`, { max: 5 });
+      if (!SAAT.test(bas) || !SAAT.test(bit)) throw hatalar.gecersiz("Vardiya saatleri SS:DD olmali (ornek 08:00, 24:00)");
+      if (bas === bit) throw hatalar.gecersiz(`${i + 1}. vardiyanin suresi sifir`);
+      return { ad: d.metin(x?.ad, "Vardiya adi", { zorunlu: false, max: 40 }) || `${i + 1}. vardiya`, bas, bit };
+    });
+    // Gunun her dakikasi en fazla bir vardiyada olmali (gece vardiyasi ertesi gune tasar)
+    const dk = (x) => Number(x.slice(0, 2)) * 60 + Number(x.slice(3));
+    const dolu = new Array(1440).fill(null);
+    for (const x of l) {
+      const sure = (dk(x.bit) - dk(x.bas) + 1440) % 1440 || 1440;
+      for (let m = 0; m < sure; m++) {
+        const i = (dk(x.bas) + m) % 1440;
+        if (dolu[i]) throw hatalar.gecersiz(`${x.ad} ile ${dolu[i]} cakisiyor`);
+        dolu[i] = x.ad;
+      }
+    }
+    return l;
+  }
+  if (tip === "kpi") {
+    const izinli = ["ilkParcaIlkSeferde", "fireOrani", "karantinaOrani", "zamanindaTamamlama", "musteriIadePpm", "kullanilabilirlik"];
+    const o = {};
+    for (const [k, x] of Object.entries(v || {})) {
+      if (!izinli.includes(k)) throw hatalar.gecersiz(`Bilinmeyen KPI: ${k}`);
+      o[k] = d.sayi(x, k, { min: 0, max: k === "musteriIadePpm" ? 1e6 : 100 });
+    }
+    return o;
+  }
+}
+
+router.patch(
+  "/firma/ayarlar",
+  rol(ROLLER.ADMIN),
+  sar(async (req, res) => {
+    const yeni = {};
+    for (const [k, v] of Object.entries(req.body || {})) {
+      if (k === "gerekce") continue;
+      if (!AYAR_TURU[k]) throw hatalar.gecersiz(`Bilinmeyen ayar: ${k}`);
+      yeni[k] = ayarOku(k, v);
+    }
+    if (!Object.keys(yeni).length) throw hatalar.gecersiz("Degistirilecek ayar yok");
+    const sonuc = await tx(async (c) => {
+      const f = await bir(c, "SELECT id, ayarlar FROM firma WHERE id = $1 FOR UPDATE", [req.ctx.firmaId]);
+      // KPI hedefleri tek tek guncellenir (gonderilmeyen hedef korunur)
+      if (yeni.kpiHedefleri) yeni.kpiHedefleri = { ...(f.ayarlar.kpiHedefleri || {}), ...yeni.kpiHedefleri };
+      const ayarlar = { ...f.ayarlar, ...yeni };
+      await c.query("UPDATE firma SET ayarlar = $1 WHERE id = $2", [ayarlar, f.id]);
+      await izYaz(c, req.ctx, {
+        tablo: "firma", kayitId: f.id, islem: "GUNCELLEME",
+        degisiklikler: farklar(f.ayarlar, yeni, Object.keys(yeni)),
+        gerekce: d.metin(req.body.gerekce, "Gerekce", { zorunlu: false, max: 500 }),
+      });
+      return ayarlar;
+    });
+    res.json(sonuc);
+  }),
+);
+
 // ---- Genel tanim uclari ----
 
 // GET /api/tanimlar/:tur?hepsi=1  (hepsi=1 pasifleri de getirir)
@@ -205,6 +325,7 @@ router.post(
     const alanlar = alanlariOku(tur, req.body, false);
     const kolonlar = Object.keys(alanlar);
     const yeni = await tx(async (c) => {
+      await tanimKontrol(c, tur.tablo, req.ctx.firmaId, alanlar);
       const r = await bir(
         c,
         `INSERT INTO ${tur.tablo} (firma_id, ${kolonlar.join(", ")}) VALUES ($1, ${kolonlar.map((_, i) => `$${i + 2}`).join(", ")}) RETURNING *`,
@@ -229,6 +350,7 @@ router.patch(
     const guncel = await tx(async (c) => {
       const eski = await bir(c, `SELECT * FROM ${tur.tablo} WHERE id = $1 AND firma_id = $2 FOR UPDATE`, [req.params.id, req.ctx.firmaId]);
       if (!eski) throw hatalar.bulunamadi();
+      await tanimKontrol(c, tur.tablo, req.ctx.firmaId, { ...eski, ...alanlar });
       const set = kolonlar.map((k, i) => `${k} = $${i + 3}`).join(", ");
       const r = await bir(c, `UPDATE ${tur.tablo} SET ${set} WHERE id = $1 AND firma_id = $2 RETURNING *`, [
         eski.id,

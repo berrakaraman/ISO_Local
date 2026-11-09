@@ -7,7 +7,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Ban, KeyRound, Loader2, Lock, Pencil, Plus, RotateCcw, Search } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/iso/PageHeader";
-import { Alan, PencereBasligi, girdi } from "@/components/iso/FormParcalari";
+import { Alan, Bolum, PencereBasligi, girdi } from "@/components/iso/FormParcalari";
+import { useTanimlar } from "@/lib/tanimlar";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
@@ -37,6 +38,8 @@ const TURLER: Tur[] = [
     { ad: "kod", etiket: "Kod", tip: "kod", zorunlu: true, kilitli: true },
     { ad: "ad", etiket: "Ad", zorunlu: true },
     { ad: "tip", etiket: "Tip", tip: "secim", secenekler: MAKINE_TIPI, zorunlu: true },
+    { ad: "planX", etiket: "Plan X (0-100)", tip: "sayi" },
+    { ad: "planY", etiket: "Plan Y (0-100)", tip: "sayi" },
   ] },
   { id: "malzemeler", ad: "Hammaddeler", tekil: "hammadde", alanlar: [
     { ad: "kod", etiket: "Kod", tip: "kod", zorunlu: true, kilitli: true },
@@ -65,7 +68,7 @@ const TURLER: Tur[] = [
     { ad: "gramMetre", etiket: "Gram / metre", tip: "sayi", zorunlu: true },
   ] },
   { id: "karakteristikler", ad: "Kontrol planı", tekil: "kontrol maddesi",
-    aciklama: "İlk parça, metraj ve son kontrolde ölçülen değerler ve sınırları.", alanlar: [
+    aciklama: "İlk parça, periyodik proses, metraj ve son kontrolde ölçülen değerler ve sınırları.", alanlar: [
     { ad: "urunId", etiket: "Ürün", tip: "baglanti", baglanti: "urunler", zorunlu: true, kilitli: true },
     { ad: "asama", etiket: "Aşama", tip: "secim", secenekler: ASAMA, zorunlu: true },
     { ad: "ad", etiket: "Ölçülen", zorunlu: true },
@@ -93,7 +96,10 @@ function TanimlarSayfasi() {
   const yonetici = rolVar(oturum, "ADMIN");
   const [secili, setSecili] = useState("makineler");
 
-  const sekmeler = [...TURLER.map((t) => ({ id: t.id, ad: t.ad })), ...(yonetici ? [{ id: "kullanicilar", ad: "Kullanıcılar" }] : [])];
+  const sekmeler = [
+    ...TURLER.map((t) => ({ id: t.id, ad: t.ad })),
+    ...(yonetici ? [{ id: "kullanicilar", ad: "Kullanıcılar" }, { id: "firma", ad: "Firma ayarları" }] : []),
+  ];
 
   return (
     <div className="animate-belir">
@@ -126,6 +132,8 @@ function TanimlarSayfasi() {
           )}
           {secili === "kullanicilar" ? (
             <Kullanicilar />
+          ) : secili === "firma" ? (
+            <FirmaAyarlari />
           ) : (
             <TanimTablosu key={secili} tur={TURLER.find((t) => t.id === secili)!} yonetici={yonetici} />
           )}
@@ -156,7 +164,7 @@ function TanimTablosu({ tur, yonetici }: { tur: Tur; yonetici: boolean }) {
     const v = r[a.ad];
     if (v === null || v === undefined || v === "") return "—";
     if (a.tip === "baglanti") return ad(a.baglanti!, v);
-    if (a.tip === "secim") return a.secenekler?.find((s) => s[0] === v)?.[1] ?? v;
+    if (a.tip === "secim") return a.secenekler?.find((s) => s[0] === String(v))?.[1] ?? v;
     if (a.tip === "sayi") return sayi(v, 4);
     return tr(String(v));
   };
@@ -598,5 +606,119 @@ function KullaniciPenceresi({ k, kapat }: { k: Kullanici | null; kapat: () => vo
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// Firma ayarlari: onay zorunluluklari, toleranslar, vardiyalar (KPI planli sure), KPI hedefleri
+const AYAR_SAYI: [string, string, string][] = [
+  ["dengeToleransiYuzde", "İş emri miktar dengesi toleransı (%)", "Aşılırsa iş emri 'fark açıklaması bekliyor' olur"],
+  ["kesimToleransiYuzde", "Kesim ölçüm toleransı (%)", "Parçalar topu bu kadar aşabilir (ölçüm farkı)"],
+  ["numuneSaklamaYil", "Şahit numune saklama (yıl)", "İmha tarihi = alınma + bu süre"],
+  ["prosesOlcumAraligiDk", "Proses ölçüm aralığı (dk)", "Geçerse top kapatılamaz; 0 = kontrol yok"],
+];
+const AYAR_BOOL: [string, string][] = [
+  ["isEmriOnayZorunlu", "Onaylanmamış iş emri başlatılamaz"],
+  ["sevkiyatOnayZorunlu", "Onaylanmamış sevkiyat sevk edilemez"],
+  ["numuneZorunlu", "Şahit numune alınmadan top kesilemez"],
+  ["olcumAletiZorunlu", "Her ölçümde kalibrasyonu geçerli alet seçilmeli"],
+  ["ilkParcaOperatorOnaylayabilir", "Operatör ilk parça onayı verebilir"],
+];
+const KPI_AD: [string, string][] = [
+  ["ilkParcaIlkSeferde", "İlk parça ilk seferde ≥ %"],
+  ["fireOrani", "Fire oranı ≤ %"],
+  ["karantinaOrani", "Karantina oranı ≤ %"],
+  ["zamanindaTamamlama", "Zamanında tamamlama ≥ %"],
+  ["musteriIadePpm", "Müşteri iadesi ≤ ppm"],
+  ["kullanilabilirlik", "Makine kullanılabilirliği ≥ %"],
+];
+
+function FirmaAyarlari() {
+  const t = useTanimlar();
+  const ayar = (t.data as any)?.firma?.ayarlar;
+  if (!ayar) return <Loader2 className="mx-auto my-8 h-5 w-5 animate-spin text-tas-400" />;
+  return <FirmaAyarFormu ayar={ayar} key={JSON.stringify(ayar)} />;
+}
+
+function FirmaAyarFormu({ ayar }: { ayar: Record<string, any> }) {
+  const qc = useQueryClient();
+  const [v, setV] = useState<Record<string, any>>(() => ({
+    ...Object.fromEntries(AYAR_SAYI.map(([k]) => [k, ayar[k] === undefined ? "" : String(ayar[k])])),
+    ...Object.fromEntries(AYAR_BOOL.map(([k]) => [k, !!ayar[k]])),
+  }));
+  const [vardiyalar, setVardiyalar] = useState<{ ad: string; bas: string; bit: string }[]>(ayar.vardiyalar || [{ ad: "1. vardiya", bas: "08:00", bit: "16:00" }]);
+  const [kpi, setKpi] = useState<Record<string, string>>(() => Object.fromEntries(KPI_AD.map(([k]) => [k, ayar.kpiHedefleri?.[k] === undefined ? "" : String(ayar.kpiHedefleri[k])])));
+  const [gerekce, setGerekce] = useState("");
+  const dk = (s: string) => Number(s.slice(0, 2)) * 60 + Number(s.slice(3, 5));
+  const toplamDk = vardiyalar.reduce((a, x) => a + (/^\d\d:\d\d$/.test(x.bas) && /^\d\d:\d\d$/.test(x.bit) ? (dk(x.bit) - dk(x.bas) + 1440) % 1440 || 1440 : 0), 0);
+  const kaydet = useMutation({
+    mutationFn: () => {
+      const govde: Record<string, any> = { gerekce: gerekce || undefined, vardiyalar };
+      for (const [k] of AYAR_SAYI) if (v[k] !== "") govde[k] = String(v[k]).replace(",", ".");
+      for (const [k] of AYAR_BOOL) govde[k] = v[k];
+      govde.kpiHedefleri = Object.fromEntries(Object.entries(kpi).filter(([, x]) => x !== "").map(([k, x]) => [k, String(x).replace(",", ".")]));
+      return api("/tanimlar/firma/ayarlar", { yontem: "PATCH", govde });
+    },
+    onSuccess: () => {
+      toast.success("Firma ayarları kaydedildi.");
+      qc.invalidateQueries();
+    },
+    onError: (e) => toast.error(hataMesaji(e, "Kaydedilemedi.")),
+  });
+  return (
+    <div className="space-y-5">
+      <Bolum baslik="Kurallar">
+        <div className="space-y-2">
+          {AYAR_BOOL.map(([k, ad]) => (
+            <label key={k} className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={!!v[k]} onChange={(e) => setV({ ...v, [k]: e.target.checked })} /> {ad}
+            </label>
+          ))}
+        </div>
+      </Bolum>
+      <Bolum baslik="Toleranslar ve süreler">
+        <div className="grid gap-3 sm:grid-cols-2">
+          {AYAR_SAYI.map(([k, ad, ipucu]) => (
+            <Alan key={k} etiket={ad} ipucu={ipucu}>
+              <input className={girdi} inputMode="decimal" value={v[k]} onChange={(e) => setV({ ...v, [k]: e.target.value })} />
+            </Alan>
+          ))}
+        </div>
+      </Bolum>
+      <Bolum baslik="Vardiyalar" sag={<span className={cn("text-xs", toplamDk > 1440 ? "text-unity" : "text-tas-500")}>günlük planlı süre {sayi(toplamDk)} dk</span>}>
+        <p className="mb-2 text-xs text-tas-500">Makine kullanılabilirliği (KPI) bu süreye göre hesaplanır. Gece vardiyası ertesi güne taşabilir (22:00–06:00). Vardiyalar çakışamaz.</p>
+        <div className="space-y-2">
+          {vardiyalar.map((x, i) => (
+            <div key={i} className="grid grid-cols-[1fr_110px_110px_32px] gap-2">
+              <input className={girdi} value={x.ad} onChange={(e) => setVardiyalar(vardiyalar.map((y, j) => (j === i ? { ...y, ad: e.target.value } : y)))} />
+              <input className={girdi} value={x.bas} placeholder="08:00" onChange={(e) => setVardiyalar(vardiyalar.map((y, j) => (j === i ? { ...y, bas: e.target.value } : y)))} />
+              <input className={girdi} value={x.bit} placeholder="16:00" onChange={(e) => setVardiyalar(vardiyalar.map((y, j) => (j === i ? { ...y, bit: e.target.value } : y)))} />
+              <button type="button" className="text-tas-400 hover:text-unity" disabled={vardiyalar.length === 1} onClick={() => setVardiyalar(vardiyalar.filter((_, j) => j !== i))}>
+                <Ban className="h-4 w-4" />
+              </button>
+            </div>
+          ))}
+          <button type="button" className="text-xs font-semibold text-unity" onClick={() => setVardiyalar([...vardiyalar, { ad: `${vardiyalar.length + 1}. vardiya`, bas: "", bit: "" }])}>
+            + Vardiya ekle
+          </button>
+        </div>
+      </Bolum>
+      <Bolum baslik="KPI hedefleri">
+        <div className="grid gap-3 sm:grid-cols-3">
+          {KPI_AD.map(([k, ad]) => (
+            <Alan key={k} etiket={ad}>
+              <input className={girdi} inputMode="decimal" value={kpi[k]} onChange={(e) => setKpi({ ...kpi, [k]: e.target.value })} />
+            </Alan>
+          ))}
+        </div>
+      </Bolum>
+      <div className="flex items-end gap-3">
+        <Alan etiket="Değişiklik gerekçesi (isteğe bağlı)">
+          <input className={girdi} value={gerekce} onChange={(e) => setGerekce(e.target.value)} />
+        </Alan>
+        <Button onClick={() => kaydet.mutate()} disabled={kaydet.isPending || toplamDk > 1440} className="bg-unity font-semibold hover:bg-unity-koyu">
+          {kaydet.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Ayarları kaydet
+        </Button>
+      </div>
+    </div>
   );
 }

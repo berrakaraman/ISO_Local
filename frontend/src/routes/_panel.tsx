@@ -1,9 +1,15 @@
 // Giris yapmis kullanicinin gordugu kabuk: sol menu + sayfa icerigi
-import { createFileRoute, Link, Outlet, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import {
   BarChart3,
   BookOpen,
+  Factory,
+  Gauge,
+  ShieldCheck,
+  Undo2,
+  Warehouse,
+  Workflow,
   ChevronLeft,
   ClipboardCheck,
   ClipboardList,
@@ -22,6 +28,7 @@ import { cn } from "@/lib/utils";
 import { tr } from "@/lib/sozluk";
 import { TABLES } from "@/lib/iso-data";
 import { UnityLogo } from "@/components/marka/Marka";
+import { sayfaGorur } from "@/lib/menu";
 
 export const Route = createFileRoute("/_panel")({ component: PanelKabugu });
 
@@ -41,6 +48,7 @@ const FORM_IKON: Record<string, LucideIcon> = {
 function PanelKabugu() {
   const oturum = useOturum();
   const nav = useNavigate();
+  const yol = useRouterState({ select: (r) => r.location.pathname });
   const [acik, setAcik] = useState(() => {
     try {
       return localStorage.getItem(ACIK_ANAHTAR) !== "0";
@@ -83,7 +91,9 @@ function PanelKabugu() {
     });
   };
 
-  const baglanti = (yol: string, Ikon: LucideIcon, etiket: string, tam = true, kod?: string) => (
+  // Rol bazli menu: kullanici yalnizca kendi rolunun sayfalarini gorur
+  const gorur = (y: string) => sayfaGorur(k.roller, y);
+  const baglanti = (yol: string, Ikon: LucideIcon, etiket: string, tam = true, kod?: string) => gorur(yol) && (
     <Link
       key={yol}
       to={yol as any}
@@ -139,13 +149,23 @@ function PanelKabugu() {
         <nav className="relative flex-1 overflow-y-auto overflow-x-hidden px-3 pb-4">
           {baglanti("/panel", LayoutDashboard, "Genel Bakış")}
           {baglanti("/izle", GitBranch, "Ürün Hikâyesi", false)}
+          {baglanti("/makineler", Factory, "Makineler")}
+          {baglanti("/kpi", Gauge, "Performans (KPI)")}
 
-          <Baslik>Formlar</Baslik>
+          {TABLES.some((t) => gorur(`/tablo/${t.slug}`)) && <Baslik>Formlar</Baslik>}
           {TABLES.map((t) =>
             baglanti(`/tablo/${t.slug}`, FORM_IKON[t.slug] ?? ClipboardList, t.title, true, t.code),
           )}
 
-          <Baslik>Ayarlar</Baslik>
+          {(gorur("/depo") || gorur("/geri-cagirma")) && <Baslik>İşlemler</Baslik>}
+          {baglanti("/depo", Warehouse, "Depo İşlemleri")}
+          {baglanti("/geri-cagirma", Undo2, "Geri Çağırma")}
+
+          <Baslik>Kalite Sistemi</Baslik>
+          {baglanti("/kys", ShieldCheck, "KYS Kayıtları")}
+          {baglanti("/surec", Workflow, "Süreç Akışları")}
+
+          {gorur("/tablo/tanimlar") && <Baslik>Ayarlar</Baslik>}
           {baglanti("/tablo/tanimlar", BookOpen, "Tanımlar")}
         </nav>
 
@@ -187,7 +207,19 @@ function PanelKabugu() {
       </aside>
 
       <main className="min-w-0 flex-1 overflow-auto">
-        <Outlet />
+        {gorur(yol) ? (
+          <Outlet />
+        ) : (
+          <div className="p-12">
+            <div className="max-w-lg rounded-xl border border-tas-200 bg-white p-6">
+              <div className="font-display text-xl font-bold text-murekkep">Bu sayfa sizin rolünüz için değil</div>
+              <p className="mt-2 text-sm text-tas-500">Sol menüde yalnızca kendi işinizle ilgili sayfalar görünür.</p>
+              <Link to="/panel" className="mt-4 inline-block text-sm font-semibold text-unity underline">
+                Genel Bakış'a dön
+              </Link>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

@@ -9,13 +9,18 @@ const { altNumara } = require("../services/numara");
 const { olayYaz, birimDurumu } = require("../services/iz");
 const { etiketBas } = require("../services/etiket");
 const { birimBul, birimOlustur, bagla, birimGuncelle, blokeKontrol, firmaAyarlari } = require("../services/birim");
+const { yuvarla, topla } = require("../lib/miktar");
+const { LOT_SECIM, lotSatiri } = require("../services/denge");
 
 const router = express.Router();
 
 // Olcumleri kontrol planina gore kaydeder; hepsi uygunsa true doner
 async function olcumKaydet(c, ctx, birim, asama, olcumler) {
   const kars = await c.query("SELECT * FROM karakteristik WHERE urun_id = $1 AND asama = $2 AND aktif", [birim.urun_id, asama]);
-  if (!kars.rows.length) return { gerekliydi: false, uygun: true, sonuclar: [] };
+  if (!kars.rows.length) {
+    // Kontrol plani olmayan urun uretime alinamaz (is emri acilirken engellenir); burada da gecit yok
+    throw hatalar.engel(`Bu urun icin ${asama} kontrol plani tanimli degil. Tanimlar'dan karakteristik ekleyin.`, "KONTROL_PLANI_YOK");
+  }
   if (!Array.isArray(olcumler) || !olcumler.length) {
     throw hatalar.gecersiz(`Bu urun icin ${asama} olcumu gerekli: ${kars.rows.map((k) => k.ad).join(", ")}`);
   }
@@ -50,29 +55,47 @@ router.post(
     }
     d.dizi(parcalar, "Parcalar", { min: 1, max: 500 });
     parcalar = parcalar.map((p, i) => d.sayi(p, `${i + 1}. parca boyu`, { pozitif: true }));
-    const fire = d.sayi(b.kesimFiresi, "Kesim firesi", { zorunlu: false, min: 0 }) || 0;
+    const fireGirilen = d.sayi(b.kesimFiresi, "Kesim firesi", { zorunlu: false, min: 0 });
 
     const sonuc = await tx(async (c) => {
       const F = req.ctx.firmaId;
       const top = await birimBul(c, F, req.params.barkod, { tipler: ["FG_LOT"] });
       blokeKontrol(top);
       if (top.durum !== D.KESIM_BEKLIYOR) throw hatalar.engel(`${top.barkod} kesime hazir degil (durum: ${top.durum})`, "YANLIS_DURUM");
-
-      // Metraj olcumu (bolum 8.3 adim 2): uygun degilse kesim engellenir, top karantinaya alinir
-      const olcum = await olcumKaydet(c, req.ctx, top, "METRAJ", b.olcumler);
-      if (!olcum.uygun) {
-        await birimDurumu(c, req.ctx, top, D.KARANTINA, { olayTipi: OLAY.KARANTINAYA_AYIRMA, aciklama: "Metraj olcumu tolerans disi" });
-        return { engellendi: true, mesaj: "Olcum tolerans disi. Top karantinaya alindi, kesim yapilmadi.", olcum };
-      }
-
-      const toplam = parcalar.reduce((a, x) => a + x, 0) + fire;
       const ayar = await firmaAyarlari(c, F);
-      const tol = ayar.kesimToleransiYuzde ?? 1;
-      const farkYuzde = (Math.abs(toplam - top.miktar) / top.miktar) * 100;
-      if (toplam > top.miktar * (1 + tol / 100)) {
-        throw hatalar.engel(`Parcalarin toplami (${toplam} m) topun metrajindan (${top.miktar} m) fazla`, "KESIM_FAZLA");
+
+      // Sahit numune kesimden ONCE toptan alinir (bolum 9.2). Alinmadan kesim yapilmaz.
+      if (ayar.numuneZorunlu !== false) {
+        const nm = await bir(c, "SELECT 1 FROM birim WHERE lot_id = $1 AND tip = 'NM'", [top.lot_id]);
+        if (!nm) throw hatalar.engel("Once bu toptan sahit numune alin, sonra kesim yapin.", "NUMUNE_YOK");
       }
-      const aciklama = d.metin(b.aciklama, "Aciklama", { zorunlu: farkYuzde > tol, max: 1000 });
+
+      // Metraj olcumu (bolum 8.3 adim 2): uygun degilse kesim engellenir, top karantinaya alinir.
+      // Kalite "sartli kabul" verdiyse olcum yine kaydedilir ama kesimi durdurmaz.
+      const olcum = await olcumKaydet(c, req.ctx, top, "METRAJ", b.olcumler);
+      if (!olcum.uygun && !top.ek?.sartliKabul) {
+        await birimGuncelle(c, req.ctx, top.id, { ek: { ...top.ek, karantina: { neden: "Metraj olcumu tolerans disi", sonuclar: olcum.sonuclar } } });
+        await birimDurumu(c, req.ctx, top, D.KARANTINA, { olayTipi: OLAY.KARANTINAYA_AYIRMA, aciklama: "Metraj olcumu tolerans disi", gerekce: "Metraj olcumu tolerans disi" });
+        await c.query("UPDATE lot SET durum = $1 WHERE id = $2", [D.KARANTINA, top.lot_id]);
+        return { engellendi: true, mesaj: "Olcum tolerans disi. Top karantinaya alindi, kesim yapilmadi. Karari kalite verir.", olcum };
+      }
+
+      // Hesap: top metraji = parcalar + fire. Fire, girilen degil HESAPLANAN degerdir (kayip metre kalmaz).
+      const topMetre = yuvarla(top.miktar);
+      const parcaToplam = topla(parcalar);
+      const kalan = yuvarla(topMetre - parcaToplam); // > 0 fire, < 0 olcum fazlasi
+      const tol = ayar.kesimToleransiYuzde ?? 1;
+      const tolMetre = yuvarla((topMetre * tol) / 100);
+      if (kalan < -tolMetre) {
+        throw hatalar.engel(`Parcalarin toplami (${parcaToplam} m) topun metrajindan (${topMetre} m) %${tol}'den fazla buyuk`, "KESIM_FAZLA");
+      }
+      const fire = kalan > 0 ? kalan : 0;
+      const olcumFazlasi = kalan < 0 ? -kalan : 0;
+      // Aciklama zorunlu: operatorun bildirdigi fire ile hesaplanan fire arasinda tolerans ustu fark varsa
+      const bildirilen = fireGirilen ?? 0;
+      const sapma = yuvarla(Math.abs(kalan - bildirilen));
+      const farkYuzde = topMetre > 0 ? yuvarla((sapma / topMetre) * 100, 2) : 0;
+      const aciklama = d.metin(b.aciklama, "Aciklama", { zorunlu: sapma > tolMetre, max: 1000 });
 
       const birimler = [];
       const etiketler = [];
@@ -90,19 +113,34 @@ router.post(
       await birimDurumu(c, req.ctx, top, D.KESILDI);
       await c.query("UPDATE lot SET durum = $1 WHERE id = $2", [D.KESILDI, top.lot_id]);
       await olayYaz(c, req.ctx, {
-        tip: OLAY.KESIM, birimId: top.id, miktar: toplam - fire, olcuBirimi: top.olcu_birimi,
-        aciklama: `${parcalar.length} parca${aciklama ? ` - ${aciklama}` : ""}`, veri: { parcalar, fire, farkYuzde },
+        tip: OLAY.KESIM, birimId: top.id, miktar: parcaToplam, olcuBirimi: top.olcu_birimi,
+        aciklama: `${parcalar.length} parca${aciklama ? ` - ${aciklama}` : ""}`,
+        veri: { parcalar, topMetre, parcaToplam, fireHesaplanan: fire, fireBildirilen: fireGirilen, olcumFazlasi, farkYuzde },
       });
       if (fire > 0) {
-        await olayYaz(c, req.ctx, { tip: OLAY.HURDA, birimId: top.id, miktar: fire, olcuBirimi: top.olcu_birimi, aciklama: "Kesim firesi" });
+        await olayYaz(c, req.ctx, {
+          tip: OLAY.HURDA, birimId: top.id, miktar: fire, olcuBirimi: top.olcu_birimi,
+          aciklama: "Kesim firesi", veri: { neden: "KESIM_FIRESI" },
+        });
       }
-      return { engellendi: false, lotNo: top.lot_no, birimler, etiketler, toplam, farkYuzde: Math.round(farkYuzde * 100) / 100, olcum };
+      if (olcumFazlasi > 0) {
+        await olayYaz(c, req.ctx, {
+          tip: OLAY.DUZELTME, birimId: top.id, miktar: olcumFazlasi, olcuBirimi: top.olcu_birimi,
+          aciklama: "Kesimde parcalar top metrajindan uzun cikti (olcum farki)", veri: { neden: "OLCUM_FAZLASI" },
+        });
+      }
+      return {
+        engellendi: false, lotNo: top.lot_no, birimler, etiketler,
+        hesap: { topMetre, parcaToplam, fire, olcumFazlasi, fireBildirilen: fireGirilen, kontrol: yuvarla(parcaToplam + fire - olcumFazlasi) },
+        toplam: yuvarla(parcaToplam + fire), farkYuzde, olcum,
+      };
     });
     res.status(sonuc.engellendi ? 409 : 201).json(sonuc);
   }),
 );
 
 // POST /api/lotlar/:barkod/numune  { arsivYeri? }  -> sahit numune (bolum 9.2)
+// Numune kesimden once topun kendisinden kesilir: topun metraji numune boyu kadar azalir.
 router.post(
   "/:barkod/numune",
   rol(ROLLER.KALITE, ROLLER.OPERATOR),
@@ -113,20 +151,31 @@ router.post(
       const barkod = `NM-${top.lot_no}`;
       const varMi = await bir(c, "SELECT 1 FROM birim WHERE firma_id = $1 AND barkod = $2", [F, barkod]);
       if (varMi) throw hatalar.engel(`Bu lottan zaten numune alinmis: ${barkod}`, "ZATEN_VAR");
+      blokeKontrol(top);
+      if (top.durum !== D.KESIM_BEKLIYOR) {
+        throw hatalar.engel(`Numune kesimden once, kesim bekleyen toptan alinir (top durumu: ${top.durum})`, "YANLIS_DURUM");
+      }
       const urun = await bir(c, "SELECT numune_boyu FROM urun WHERE id = $1", [top.urun_id]);
+      const boy = yuvarla(Number(urun.numune_boyu) || 1);
+      if (boy >= Number(top.miktar)) throw hatalar.engel(`Numune boyu (${boy} m) topun kalan metrajindan (${top.miktar} m) kucuk olmali`, "YETERSIZ_MIKTAR");
       const ayar = await firmaAyarlari(c, F);
       const imha = new Date();
       imha.setFullYear(imha.getFullYear() + (ayar.numuneSaklamaYil ?? 3));
       const arsivYeri = req.body.arsivYeri ? d.kod(req.body.arsivYeri, "Arsiv yeri") : null;
       const nm = await birimOlustur(c, req.ctx, {
         barkod, tip: "NM", lotId: top.lot_id, urunId: top.urun_id, isEmriId: top.is_emri_id, makineId: top.makine_id,
-        miktar: urun.numune_boyu || 1, olcuBirimi: top.olcu_birimi, durum: D.ARSIVDE,
+        miktar: boy, olcuBirimi: top.olcu_birimi, durum: D.ARSIVDE,
         yer: arsivYeri ? `NUMUNE:${arsivYeri}` : "NUMUNE",
         ek: { arsivYeri, imhaTarihi: imha.toISOString().slice(0, 10) },
       });
-      await bagla(c, req.ctx, top.id, nm.id, "NUMUNE", nm.miktar);
-      await olayYaz(c, req.ctx, { tip: OLAY.NUMUNE, birimId: nm.id, karsiBirimId: top.id, miktar: nm.miktar, olcuBirimi: nm.olcu_birimi, aciklama: arsivYeri || "" });
-      return { numune: nm, etiket: await etiketBas(c, req.ctx, nm.id) };
+      const kalan = yuvarla(top.miktar - boy);
+      await birimGuncelle(c, req.ctx, top.id, { miktar: kalan });
+      await bagla(c, req.ctx, top.id, nm.id, "NUMUNE", boy);
+      await olayYaz(c, req.ctx, {
+        tip: OLAY.NUMUNE, birimId: nm.id, karsiBirimId: top.id, miktar: boy, olcuBirimi: nm.olcu_birimi,
+        aciklama: arsivYeri || "", veri: { topKalan: kalan },
+      });
+      return { numune: nm, topKalan: kalan, etiket: await etiketBas(c, req.ctx, nm.id) };
     });
     res.status(201).json(sonuc);
   }),
@@ -143,8 +192,8 @@ router.post(
       const eski = await birimBul(c, F, req.params.barkod, { tipler: ["FG"] });
       blokeKontrol(eski);
       if (![D.SERBEST, D.DEPODA].includes(eski.durum)) throw hatalar.engel(`${eski.barkod} bolunemez (durum: ${eski.durum})`, "YANLIS_DURUM");
-      const toplam = parcalar.reduce((a, x) => a + x, 0);
-      if (toplam > eski.miktar) throw hatalar.engel(`Parcalarin toplami (${toplam}) mevcut boydan (${eski.miktar}) fazla`, "KESIM_FAZLA");
+      const toplam = topla(parcalar);
+      if (toplam > yuvarla(eski.miktar)) throw hatalar.engel(`Parcalarin toplami (${toplam}) mevcut boydan (${eski.miktar}) fazla`, "KESIM_FAZLA");
       const yeniler = [];
       const etiketler = [];
       for (const boy of parcalar) {
@@ -159,8 +208,9 @@ router.post(
       }
       await birimGuncelle(c, req.ctx, eski.id, { miktar: 0 });
       await birimDurumu(c, req.ctx, eski, D.BOLUNDU, { olayTipi: OLAY.KESIM, aciklama: `${parcalar.length} parcaya bolundu` });
-      if (toplam < eski.miktar) {
-        await olayYaz(c, req.ctx, { tip: OLAY.HURDA, birimId: eski.id, miktar: eski.miktar - toplam, olcuBirimi: eski.olcu_birimi, aciklama: "Yeniden kesim firesi" });
+      const bolmeFiresi = yuvarla(eski.miktar - toplam);
+      if (bolmeFiresi > 0) {
+        await olayYaz(c, req.ctx, { tip: OLAY.HURDA, birimId: eski.id, miktar: bolmeFiresi, olcuBirimi: eski.olcu_birimi, aciklama: "Yeniden kesim firesi", veri: { neden: "BOLME_FIRESI" } });
       }
       return { eski: eski.barkod, yeniler, etiketler };
     });
@@ -168,55 +218,13 @@ router.post(
   }),
 );
 
-// F-03 Uretim Lot ve YP Uretim Ozeti: her top (uretim lotu) icin miktar dokumu.
-// Toplam = top metraji + uretim sirasinda karantinaya ayrilan; Uygun = kullanilabilir parcalar;
-// Red/Hurda = hurda karantina + son kontrol reddi + kesim firesi.
-const LOT_SECIM = `
-  SELECT l.id, l.no, l.durum, l.olusturma_zamani,
-         u.kod AS urun_kod, u.ad AS urun_ad, u.olcu_birimi,
-         ie.no AS is_emri_no, m.kod AS makine_kod,
-         ko.ad_soyad AS operator_ad, ko.sicil_no AS operator_sicil,
-         t.barkod AS top_barkod, t.ilk_miktar AS top_metraji, t.durum AS top_durum, t.bloke AS top_bloke,
-         COALESCE((t.ek->>'baslangic')::timestamptz, ie.baslangic) AS baslangic, t.olusturma_zamani AS bitis,
-         COALESCE(f.uygun, 0) AS uygun, COALESCE(f.kalite_bekleyen, 0) AS kalite_bekleyen, COALESCE(f.ret, 0) AS ret,
-         COALESCE(f.parca_sayisi, 0) AS parca_sayisi, COALESCE(f.bloke_parca, 0) AS bloke_parca,
-         COALESCE(k.karantina, 0) AS karantina, COALESCE(k.karantina_bekleyen, 0) AS karantina_bekleyen,
-         COALESCE(k.karantina_hurda, 0) AS karantina_hurda,
-         COALESCE(h.kesim_firesi, 0) AS kesim_firesi,
-         rm.hammadde_lotlari, nm.barkod AS numune_barkod
-    FROM lot l
-    JOIN urun u ON u.id = l.urun_id
-    LEFT JOIN is_emri ie ON ie.id = l.is_emri_id
-    LEFT JOIN makine m ON m.id = ie.makine_id
-    LEFT JOIN kullanici ko ON ko.id = l.olusturan
-    LEFT JOIN birim t ON t.lot_id = l.id AND t.tip = 'FG_LOT'
-    LEFT JOIN LATERAL (
-      SELECT sum(b.miktar) FILTER (WHERE b.durum IN ('SERBEST','DEPODA','SIPARISE_AYRILDI','SEVK_EDILDI')) AS uygun,
-             sum(b.miktar) FILTER (WHERE b.durum = 'KALITE_BEKLIYOR') AS kalite_bekleyen,
-             sum(b.ilk_miktar) FILTER (WHERE b.durum IN ('RET','HURDA')) AS ret,
-             count(*) FILTER (WHERE b.durum <> 'BOLUNDU') AS parca_sayisi,
-             count(*) FILTER (WHERE b.bloke) AS bloke_parca
-        FROM birim b WHERE b.lot_id = l.id AND b.tip = 'FG') f ON true
-    LEFT JOIN LATERAL (
-      SELECT sum(b.ilk_miktar) AS karantina,
-             sum(b.ilk_miktar) FILTER (WHERE b.durum IN ('KARAR_BEKLIYOR','YENIDEN_ISLEME')) AS karantina_bekleyen,
-             sum(b.ilk_miktar) FILTER (WHERE b.durum = 'HURDA') AS karantina_hurda
-        FROM birim b WHERE b.lot_id = l.id AND b.tip = 'KR') k ON true
-    LEFT JOIN LATERAL (
-      SELECT sum(o.miktar) AS kesim_firesi FROM olay o WHERE o.birim_id = t.id AND o.tip = 'HURDA') h ON true
-    LEFT JOIN LATERAL (
-      SELECT string_agg(DISTINCT rl.no, ', ') AS hammadde_lotlari
-        FROM birim_bagi bb JOIN birim rb ON rb.id = bb.kaynak_id JOIN lot rl ON rl.id = rb.lot_id
-       WHERE bb.hedef_id = t.id AND bb.tip = 'TUKETILDI') rm ON true
-    LEFT JOIN birim nm ON nm.lot_id = l.id AND nm.tip = 'NM'
-   WHERE l.firma_id = $1 AND l.tip = 'FG'`;
-
+// F-03 Uretim Lot ve YP Uretim Ozeti: her top icin miktar dokumu ve denge kontrolu (services/denge.js).
 // GET /api/lotlar  -> uretim lotlari (en yeni once)
 router.get(
   "/",
   sar(async (req, res) => {
     const r = await pool.query(`${LOT_SECIM} ORDER BY l.olusturma_zamani DESC LIMIT 500`, [req.ctx.firmaId]);
-    res.json(r.rows);
+    res.json(r.rows.map(lotSatiri));
   }),
 );
 
@@ -225,8 +233,9 @@ router.get(
   "/:no",
   sar(async (req, res) => {
     const F = req.ctx.firmaId;
-    const lot = await bir(pool, `${LOT_SECIM} AND l.no = $2`, [F, String(req.params.no).toUpperCase()]);
-    if (!lot) throw hatalar.bulunamadi("Uretim lotu bulunamadi");
+    const ham = await bir(pool, `${LOT_SECIM} AND l.no = $2`, [F, String(req.params.no).toUpperCase()]);
+    if (!ham) throw hatalar.bulunamadi("Uretim lotu bulunamadi");
+    const lot = lotSatiri(ham);
     const birimler = await pool.query(
       `SELECT b.barkod, b.tip, b.ilk_miktar, b.miktar, b.olcu_birimi, b.durum, b.bloke, b.yer, b.ek, b.olusturma_zamani,
               b.kaynak_birim_id, k.ad_soyad AS olusturan_ad

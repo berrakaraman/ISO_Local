@@ -20,6 +20,8 @@ async function lotKilitle(c, firmaId, lotNo) {
 async function hammaddeKarari(c, ctx, lotNo, karar, not, { onayiEsitle = true } = {}) {
   const lot = await lotKilitle(c, ctx.firmaId, lotNo);
   if (lot.durum === D.IPTAL) throw hatalar.engel("Bu lot iptal edilmis, karar verilemez", "IPTAL_EDILMIS");
+  // Dort goz kurali: mal kabulu yapan kisi kendi lotunun giris kontrolunu onaylayamaz
+  if (lot.olusturan === ctx.kullaniciId) throw hatalar.yasak("Mal kabulunu yaptiginiz lotun giris kontrol kararini veremezsiniz (dort goz kurali).");
   const r = await c.query(
     `SELECT * FROM birim WHERE lot_id = $1 AND durum IN ('KONTROL_BEKLIYOR','KABUL','KARANTINA') FOR UPDATE`,
     [lot.id],
@@ -34,7 +36,11 @@ async function hammaddeKarari(c, ctx, lotNo, karar, not, { onayiEsitle = true } 
     degisiklikler: [{ alan: "durum", eski: lot.durum, yeni: karar }], gerekce: not,
   });
   if (onayiEsitle) await onayEsitle(c, ctx, "HAMMADDE", lot.no, KARAR_ONAY[karar], not);
-  return { lotNo: lot.no, karar, etkilenenAmbalaj: r.rows.length };
+  // Kullanilamaz karar verildiyse su an makinede bagli ambalajlar bildirilir; topu bitirme bu ambalajlarla engellenir
+  const bagli = karar === D.KABUL ? [] : (await c.query(
+    `SELECT b.barkod, ie.no AS is_emri_no FROM is_emri_baglama g JOIN birim b ON b.id = g.birim_id JOIN is_emri ie ON ie.id = g.is_emri_id
+      WHERE b.lot_id = $1 AND g.cikarma_zamani IS NULL`, [lot.id])).rows;
+  return { lotNo: lot.no, karar, etkilenenAmbalaj: r.rows.length, makinedeBagliAmbalajlar: bagli };
 }
 
 // Lotu iptal eder. Yalnizca hic kullanilmamis lot iptal edilebilir;

@@ -107,7 +107,7 @@ function Sevkiyat() {
 function YeniSevkiyat({ kapat, acildi }: { kapat: () => void; acildi: (no: string) => void }) {
   const qc = useQueryClient();
   const t = useTanimlar();
-  const kisiler = useKisiler();
+  const kisiler = useKisiler(undefined, "SEVKIYAT");
   const [f, setF] = useState({ musteriId: "", urunId: "", siparisNo: "", irsaliyeNo: "", atananId: "" });
   const m = useMutation({
     mutationFn: () =>

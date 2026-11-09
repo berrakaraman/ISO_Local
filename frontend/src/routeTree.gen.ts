@@ -13,6 +13,12 @@ import { Route as pTanimlar } from "./routes/_panel.tanimlar";
 import { Route as pIzle } from "./routes/_panel.izle";
 import { Route as pIzleBarkod } from "./routes/_panel.izle.$barkod";
 import { Route as qrRoute } from "./routes/b.$barkod";
+import { Route as pMakineler } from "./routes/_panel.makineler";
+import { Route as pKpi } from "./routes/_panel.kpi";
+import { Route as pDepo } from "./routes/_panel.depo";
+import { Route as pGeriCagirma } from "./routes/_panel.geri-cagirma";
+import { Route as pKys } from "./routes/_panel.kys";
+import { Route as pSurec } from "./routes/_panel.surec";
 
 const IndexRoute = indexRoute.update({
   id: "/",
@@ -70,6 +76,12 @@ const children = [
     path: "/tablo/tanimlar",
     getParentRoute: () => PanelRoute,
   } as any),
+  pMakineler.update({ path: "/makineler", getParentRoute: () => PanelRoute } as any),
+  pKpi.update({ path: "/kpi", getParentRoute: () => PanelRoute } as any),
+  pDepo.update({ path: "/depo", getParentRoute: () => PanelRoute } as any),
+  pGeriCagirma.update({ path: "/geri-cagirma", getParentRoute: () => PanelRoute } as any),
+  pKys.update({ path: "/kys", getParentRoute: () => PanelRoute } as any),
+  pSurec.update({ path: "/surec", getParentRoute: () => PanelRoute } as any),
 ];
 
 const PanelRouteWithChildren = PanelRoute._addFileChildren(children);

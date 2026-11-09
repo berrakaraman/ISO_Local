@@ -1,6 +1,6 @@
 # Backend kurulumu (Adım 1)
 
-Bu klasör, şartnamedeki backend'in tamamıdır: veritabanı şeması, giriş, tanımlar, mal kabul, iş emri ve kiosk akışı, karantina, kesim, kalite, sevkiyat, bloke, soy ağacı, hammadde bakiye kartı, panel ve değişiklik izi.
+Bu klasör, şartnamedeki backend'in tamamıdır: veritabanı şeması, giriş, tanımlar, mal kabul, iş emri ve kiosk akışı, periyodik proses kontrolü, bakım / arıza kaydı, karantina, kesim, kalite, sevkiyat, bloke ve geri çağırma, müşteri şikâyeti / iade / DÖF, kalibrasyon, eğitim, tedarikçi değerlendirme, numune arşivi, KPI, soy ağacı, hammadde bakiye kartı, panel, değişiklik izi ve yedekleme.
 
 ## 0. Eski dosyaları temizle (bir kez)
 
@@ -61,17 +61,46 @@ npm run db:reset     # veritabanını sıfırlar ve örnek veriyi yeniden yükle
 npm run test:akis
 ```
 
-Ekranın sonunda `Sonuc: 82 basarili, 0 basarisiz` görmelisin. Bu test, mal kabulden sevkiyata kadar bütün akışı ve engellenmesi gereken durumları (onaysız malzeme, bloke parça, ilk parça onayı olmadan üretim vb.) dener.
+Ekranın sonunda `Sonuc: 405 basarili, 0 basarisiz` görmelisin. Bu test, mal kabulden sevkiyata kadar bütün akışı, engellenmesi gereken durumları (onaysız malzeme, onaylanmamış iş emri/sevkiyat, kendi kaydını onaylama, geciken ya da uygun olmayan proses ölçümü, kalibrasyonu geçmiş alet, numunesiz kesim, bloke parça, DÖF kapanmadan şikâyet kapatma vb.) ve **hesapları** (lot dengesi, iş emri malzeme dengesi, hammadde bakiye kartı, makine kullanılabilirliği, tedarikçi puanı, KPI pay/payda) sayı sayı dener.
+
+Test, zamanın geçmesini taklit etmek için (proses ölçüm aralığı, numune saklama süresi) birkaç kaydın zamanını doğrudan veritabanında geriye alır; bu yüzden yalnızca yerel/test veritabanında çalıştırın.
+
+Test bittiğinde veritabanında gerçekçi bir örnek akış kalır (5 iş emri, 6 üretim lotu, karantina, sevkiyat, bakım / arıza kayıtları, şikâyet + iade + DÖF, kalibrasyon, tedarikçi değerlendirmesi). Sunum için ekranları bu veriyle gezebilirsin.
+
+### Uçtan uca kurallar (bir adım onaylanmadan sonraki başlamaz)
+
+| Adım | Geçiş şartı |
+| --- | --- |
+| Hammadde makineye / depodan çekiş | Giriş kontrolü kaliteden **Kabul** almış olmalı (mal kabulde kalite sorumlusu seçmek zorunlu) |
+| İş emri açma | Ürün kartında reçete (g/m), ilk parça ve metraj kontrol planı olmalı; onaylayacak kalite/yönetim kişisi seçilmeli |
+| İş emri başlatma | İş emri **onaylanmış** olmalı. Onaydan sonra miktar/makine değişirse onay sıfırlanır |
+| İlk parça onayı | Yalnızca işin **ilk başlangıcında** istenir; onayı kalite verir (firma ayarıyla operatöre açılabilir). Ölçüm aleti seçildiyse kalibrasyonu geçerli olmalı. Duraklatmadan dönüşte yeniden istenmez |
+| Makine başlatma | Aynı makinede başka iş emri çalışıyor olmamalı |
+| Top bitirme | İlk parça onaylı, makinede bağlı hammadde **hâlâ kabul** durumunda (karantinaya/redde alınmışsa engellenir), periyodik **proses ölçümü gecikmemiş** (varsayılan 120 dk) |
+| Proses ölçümü | Bir değer bile tolerans dışıysa iş emri **otomatik durur**; Devam et sonrası **uygun bir proses ölçümü** yapılmadan top kapanmaz |
+| Kesim | Önce **şahit numune** alınmış olmalı (toptan düşülür); metraj ölçümü toleransta olmalı, değilse top karantinaya girer ve kalite karar verir |
+| Sevk | Parçalar kaliteden serbest, bloke değil; sevkiyat **onaylanmış** olmalı. Onaydan sonra parça eklenir/çıkarılırsa onay sıfırlanır |
+| Müşteri iadesi | Parça o müşteriye sevk edilmiş olmalı; bir şikâyete bağlanır, parça karantinaya girer |
+| Şikâyet kapatma | Haklı şikâyette bağlı **DÖF kapanmış** ve iade parçaların kararı verilmiş olmalı |
+| DÖF | Kök neden + faaliyet yazılmadan tamamlanamaz; **sorumlu kendi DÖF'ünü kapatamaz** |
+| Numune imhası | Saklama süresi dolmuş olmalı; lotunda açık şikâyet varsa imha edilemez (delil) |
+| Tedarikçi | Puan < 60 → askıya alınır → mal kabul yapılamaz |
+| Her onay | Dört göz: kişi kendi girdiği kaydı onaylayamaz |
+
+### Miktar dengesi (her üretim lotu için otomatik kontrol)
+
+`top metrajı + karantinaya ayrılan (+ kesimde ölçüm fazlası) = kesilmemiş top + şahit numune + uygun + son kontrol bekleyen + karantinadaki parça + karar bekleyen karantina + hurda`
+
+Fark sıfır değilse lot ekranında kırmızı "Miktar farkı" uyarısı çıkar. Fire oranı yalnızca hurda / toplam üretimdir; kararı bekleyen karantina fire sayılmaz.
 
 ## Örnek hesaplar (yalnızca yerel)
 
 | Kullanıcı | Şifre | Kiosk | Rol |
 | --- | --- | --- | --- |
-| admin | Admin.1234 | | ADMIN, YONETIM |
-| kalite | Kalite.1234 | sicil 1001, PIN 1111 | KALITE |
-| sef | Sef.1234 | sicil 1002, PIN 2222 | SEF |
-| depo | Depo.1234 | sicil 1003, PIN 3333 | DEPO |
-| (yok) | | sicil 1215, PIN 1234 (kart: PR-1215) | OPERATOR |
+| berra | Berra.1234 | sicil 1001, PIN 1111 | ADMIN, YONETIM, KALITE |
+| mehmet | Mehmet.1234 | sicil 1002, PIN 2222 | SEF |
+| ayse | Ayse.1234 | sicil 1003, PIN 3333 | DEPO |
+| ahmet | Ahmet.1234 | sicil 1215, PIN 1234 (kart: PR-1215) | OPERATOR |
 | denetci | Denetci.1234 | | DENETCI (salt okunur) |
 
 ## Komutlar
@@ -83,6 +112,8 @@ Ekranın sonunda `Sonuc: 82 basarili, 0 basarisiz` görmelisin. Bu test, mal kab
 | `npm run db:seed` | Örnek veriyi yükler (firma zaten varsa atlar) |
 | `npm run db:reset` | **Tüm veriyi siler**, şemayı ve örnek veriyi baştan kurar |
 | `npm run test:akis` | Uçtan uca akış testi |
+| `npm run yedekle` | Veritabanı yedeği (`backend/yedekler/`, son 30 yedek tutulur, yedek doğrulanır) |
+| `npm run geri-yukle -- <dosya> --evet` | Yedekten geri yükler (önce mevcut durumun yedeğini alır) |
 
 ## Klasör yapısı
 
@@ -132,6 +163,19 @@ Tüm istekler `Authorization: Bearer <token>` başlığı ister (giriş ve sağl
 | `GET/POST /api/birimler/:barkod/etiket` · `POST /yerlestir` | Etiket önizleme ve yeniden baskı, rafa yerleştirme | |
 | `GET /api/panel/ozet` · `makineler` · `olaylar` · `saatlik` | Genel Bakış ekranı | |
 | `GET /api/panel/degisiklik-izi` · `iz-dogrula` | Değişiklik izi ve zincir doğrulaması | KALITE, DENETCI, YONETIM |
+| `POST /api/is-emirleri/:no/proses-olcum` | Periyodik proses ölçümü; tolerans dışı → otomatik duraklatma | OPERATOR, KALITE, SEF |
+| `POST /api/is-emirleri/:no/duraklat` | `{ gerekce? }` işi durdurur (süre tutulmaz) | OPERATOR, SEF |
+| `GET /api/kalite/numuneler` · `POST /numuneler/:barkod/imha` | Numune arşivi ve imha | KALITE |
+| `POST /api/kalite/musteri-iadesi` | Şikâyete bağlı müşteri iadesi | KALITE, DEPO |
+| `GET/POST /api/kys/aletler` · `POST /aletler/:kod/kalibrasyon` | Ölçüm aletleri, kalibrasyon | KALITE |
+| `GET/POST /api/kys/bakimlar` | Bakım / arıza kaydı: makine, tarih, tür, arıza, yapılan, parça, duruş dk (elle, değiştirilemez) | SEF, OPERATOR |
+| `GET/POST /api/kys/egitimler` | Eğitim kayıtları | KALITE, YONETIM, SEF |
+| `GET/POST /api/kys/tedarikci-degerlendirme` · `GET /onizleme` | Dönemlik tedarikçi puanı | KALITE, YONETIM |
+| `GET/POST /api/kys/sikayetler` · `/:no/dof` · `/:no/kapat` | Müşteri şikâyeti | KALITE, YONETIM |
+| `GET/POST /api/kys/doflar` · `/:no/kok-neden` · `/tamamla` · `/dogrula` | DÖF | KALITE, sorumlu |
+| `GET /api/panel/kpi?baslangic=&bitis=` | 6 gösterge, formül + pay + payda | YONETIM, KALITE, SEF, DENETCI |
+| `GET /api/panel/makineler/:kod` | Makine kartı | |
+| `PATCH /api/tanimlar/firma/ayarlar` | Kurallar, toleranslar, vardiyalar, KPI hedefleri | ADMIN |
 
 ## Güvenlik notları
 

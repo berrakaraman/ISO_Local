@@ -38,11 +38,12 @@ function UretimOzeti() {
       const h = lotHesap(l);
       t.uretim += h.toplam;
       t.uygun += Number(l.uygun);
-      t.karantina += Number(l.karantinaBekleyen);
+      t.karantina += h.karantinada;
       t.red += h.redHurda;
       if (h.acik) t.acik++;
     }
-    return { ...t, fire: t.uretim ? (t.karantina + t.red) / t.uretim : 0 };
+    // Fire = hurda / uretim. Karar bekleyen karantina fire degildir.
+    return { ...t, fire: t.uretim ? t.red / t.uretim : 0 };
   }, [lotlar]);
 
   const satirlar: KayitSatiri[] = lotlar.map((l) => {
@@ -56,7 +57,7 @@ function UretimOzeti() {
         "Ürün Kodu": l.urunKod,
         "Üretim Miktarı": h.toplam,
         Uygun: l.uygun,
-        Karantina: l.karantinaBekleyen,
+        Karantina: h.karantinada,
         "Red/Hurda": h.redHurda,
         "Fire %": h.fire,
         Durum: h.acik ? `Açık · ${h.durum}` : "Kapatıldı",

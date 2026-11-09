@@ -21,3 +21,6 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 .idea/
+
+# Veritabani yedekleri (git'e girmez; harici diske de kopyalayin)
+backend/yedekler/

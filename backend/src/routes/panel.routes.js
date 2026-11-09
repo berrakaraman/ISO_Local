@@ -6,6 +6,7 @@ const { sar } = require("../lib/hata");
 const d = require("../lib/dogrula");
 const { ROLLER } = require("../lib/sabitler");
 const { rol } = require("../middleware/auth");
+const { yuvarla } = require("../lib/miktar");
 
 const router = express.Router();
 
@@ -42,16 +43,18 @@ router.get(
     const r = await pool.query(
       `SELECT m.id, m.kod, m.ad, m.tip, m.plan_x, m.plan_y,
               ie.no AS is_emri_no, ie.durum AS is_emri_durumu, ie.hedef_miktar, u.kod AS urun_kod,
-              (SELECT COALESCE(sum(ilk_miktar),0) FROM birim WHERE is_emri_id = ie.id AND tip = 'FG_LOT') AS uretilen,
-              (SELECT count(*) FROM birim WHERE makine_id = m.id AND tip = 'KR'
-                 AND olusturma_zamani >= date_trunc('day', now())) AS bugun_karantina,
+              (SELECT COALESCE(sum(ilk_miktar),0) FROM birim WHERE is_emri_id = ie.id AND tip = 'FG_LOT' AND durum <> 'IPTAL') AS uretilen,
+              (SELECT COALESCE(sum(ilk_miktar), 0) FROM birim WHERE makine_id = m.id AND tip = 'KR'
+                 AND olusturma_zamani >= date_trunc('day', now() AT TIME ZONE f.saat_dilimi) AT TIME ZONE f.saat_dilimi) AS bugun_karantina,
               (SELECT k.sicil_no FROM is_emri_baglama g JOIN kullanici k ON k.id = g.kullanici_id
                 WHERE g.is_emri_id = ie.id ORDER BY g.baglama_zamani DESC LIMIT 1) AS son_operator,
+              u.ad AS urun_ad,
               CASE WHEN ie.durum = 'URETIMDE' THEN 'CALISIYOR'
-                   WHEN ie.durum = 'ILK_PARCA_BEKLIYOR' THEN 'AYAR'
+                   WHEN ie.durum = 'ILK_PARCA_BEKLIYOR' THEN 'ILK_PARCA'
                    WHEN ie.durum = 'DURAKLATILDI' THEN 'DURUYOR'
                    ELSE 'BOS' END AS durum
          FROM makine m
+         JOIN firma f ON f.id = m.firma_id
          LEFT JOIN LATERAL (
            SELECT * FROM is_emri WHERE makine_id = m.id AND durum IN ('URETIMDE','ILK_PARCA_BEKLIYOR','DURAKLATILDI')
            ORDER BY baslangic DESC NULLS LAST LIMIT 1) ie ON true
@@ -60,6 +63,172 @@ router.get(
       [req.ctx.firmaId],
     );
     res.json(r.rows);
+  }),
+);
+
+// Gunluk planli calisma dakikasi: vardiya saatlerinden (gece vardiyasi ertesi gune tasar)
+function gunlukPlanliDk(ayar) {
+  const v = Array.isArray(ayar.vardiyalar) && ayar.vardiyalar.length ? ayar.vardiyalar : [{ bas: "00:00", bit: "24:00" }];
+  const dk = (x) => {
+    const [h, m] = String(x).split(":").map(Number);
+    return h * 60 + (m || 0);
+  };
+  return v.reduce((t, x) => {
+    const fark = dk(x.bit) - dk(x.bas);
+    return t + (fark > 0 ? fark : fark + 1440);
+  }, 0);
+}
+
+// Makine kullanilabilirligi (muhendisin KPI panosu: calisilabilir sure / planli sure x 100).
+// Duruslar bakim / ariza kayitlarina elle yazilan dakikalardir (kayit tarihi donemin icindeyse sayilir).
+//   planli      = gunluk vardiya dk x gun sayisi x makine sayisi
+//   planliDurus = PLANLI bakim dakikalari (planli surenin disinda tutulur)
+//   kullanilabilirlik % = (planli - planliDurus - ariza dk) / (planli - planliDurus) x 100
+async function kullanilabilirlik(c, F, bas, bit, makineKod = null) {
+  const ayar = (await c.query("SELECT ayarlar FROM firma WHERE id = $1", [F])).rows[0].ayarlar;
+  const r = (await c.query(
+    `SELECT (SELECT count(*) FROM makine WHERE firma_id = $1 AND aktif AND ($4::text IS NULL OR kod = $4))::int AS makine_sayisi,
+            ($3::date - $2::date + 1) AS gun,
+            COALESCE(sum(b.durus_dk) FILTER (WHERE b.tur = 'PLANLI'), 0) AS planli_durus,
+            COALESCE(sum(b.durus_dk) FILTER (WHERE b.tur = 'ARIZA'), 0) AS plansiz_durus
+       FROM bakim b JOIN makine m ON m.id = b.makine_id
+      WHERE b.firma_id = $1 AND b.tarih BETWEEN $2::date AND $3::date AND m.aktif AND ($4::text IS NULL OR m.kod = $4)`,
+    [F, bas, bit, makineKod],
+  )).rows[0];
+  const gun = Number(r.gun);
+  const planli = gunlukPlanliDk(ayar) * gun * r.makine_sayisi;
+  const planliDurus = yuvarla(r.planli_durus, 2);
+  const plansizDurus = yuvarla(r.plansiz_durus, 2);
+  const net = planli - planliDurus;
+  return {
+    gun, makineSayisi: r.makine_sayisi, gunlukPlanliDk: gunlukPlanliDk(ayar), planliDk: planli, planliDurusDk: planliDurus, plansizDurusDk: plansizDurus,
+    deger: net > 0 ? yuvarla(((net - plansizDurus) / net) * 100, 2) : null,
+  };
+}
+
+const oran = (pay, payda, carpan = 100) => (payda > 0 ? yuvarla((pay / payda) * carpan, 2) : null);
+
+// GET /api/panel/kpi?baslangic=2026-10-01&bitis=2026-10-31  (varsayilan: son 30 gun)
+router.get(
+  "/kpi",
+  rol(ROLLER.YONETIM, ROLLER.KALITE, ROLLER.SEF, ROLLER.DENETCI),
+  sar(async (req, res) => {
+    const F = req.ctx.firmaId;
+    const gunAl = (v) => (v && /^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? String(v) : null);
+    const v = (await pool.query(
+      `SELECT to_char((now() AT TIME ZONE saat_dilimi)::date, 'YYYY-MM-DD') AS bugun,
+              to_char((now() AT TIME ZONE saat_dilimi)::date - 29, 'YYYY-MM-DD') AS once, ayarlar FROM firma WHERE id = $1`,
+      [F],
+    )).rows[0];
+    const bas = gunAl(req.query.baslangic) || v.once;
+    const bit = gunAl(req.query.bitis) || v.bugun;
+    if (bas > bit) return res.status(400).json({ hata: { kod: "GECERSIZ_ISTEK", mesaj: "Baslangic bitisten sonra olamaz" } });
+    const P = [F, bas, bit];
+    const ARALIK = (k) => `(${k} AT TIME ZONE (SELECT saat_dilimi FROM firma WHERE id = $1))::date BETWEEN $2::date AND $3::date`;
+    const [ilk, uretim, hurda, teslim, sevk, iade, sayilar] = await Promise.all([
+      pool.query(
+        `SELECT count(*) AS toplam, count(*) FILTER (WHERE ilk_seferde) AS ilk_seferde FROM (
+           SELECT o.is_emri_id, bool_and(o.sonuc = 'UYGUN') AS ilk_seferde
+             FROM olcum o WHERE o.firma_id = $1 AND o.asama = 'ILK_PARCA' AND o.deneme_no = 1 AND ${ARALIK("o.zaman")}
+            GROUP BY o.is_emri_id) x`, P),
+      pool.query(
+        `SELECT COALESCE(sum(ilk_miktar) FILTER (WHERE tip = 'FG_LOT'), 0) AS top, COALESCE(sum(ilk_miktar) FILTER (WHERE tip = 'KR'), 0) AS kr
+           FROM birim WHERE firma_id = $1 AND tip IN ('FG_LOT','KR') AND durum <> 'IPTAL' AND ${ARALIK("olusturma_zamani")}`, P),
+      pool.query(
+        `SELECT COALESCE(sum(o.miktar), 0) AS hurda FROM olay o JOIN birim b ON b.id = o.birim_id
+          WHERE o.firma_id = $1 AND o.tip = 'HURDA' AND b.tip IN ('FG_LOT','FG','KR') AND ${ARALIK("o.zaman")}`, P),
+      pool.query(
+        `SELECT count(*) AS toplam,
+                count(*) FILTER (WHERE (bitis AT TIME ZONE (SELECT saat_dilimi FROM firma WHERE id = $1))::date <= planlanan_tarih) AS zamaninda
+           FROM is_emri WHERE firma_id = $1 AND durum IN ('TAMAMLANDI','TAMAMLANDI_FARK') AND planlanan_tarih IS NOT NULL AND ${ARALIK("bitis")}`, P),
+      pool.query(
+        `SELECT COALESCE(sum(o.miktar), 0) AS sevk FROM olay o WHERE o.firma_id = $1 AND o.tip = 'SEVKIYAT' AND ${ARALIK("o.zaman")}`, P),
+      pool.query(
+        `SELECT COALESCE(sum(o.miktar), 0) AS iade FROM olay o WHERE o.firma_id = $1 AND o.tip = 'MUSTERI_IADESI' AND ${ARALIK("o.zaman")}`, P),
+      pool.query(
+        `SELECT (SELECT count(*) FROM sikayet WHERE firma_id = $1 AND durum <> 'KAPANDI') AS acik_sikayet,
+                (SELECT count(*) FROM dof WHERE firma_id = $1 AND durum <> 'KAPANDI') AS acik_dof,
+                (SELECT count(*) FROM dof d JOIN firma f ON f.id = d.firma_id WHERE d.firma_id = $1 AND d.durum <> 'KAPANDI'
+                    AND d.termin < (now() AT TIME ZONE f.saat_dilimi)::date) AS geciken_dof,
+                (SELECT count(*) FROM olcum_aleti a JOIN firma f ON f.id = a.firma_id WHERE a.firma_id = $1 AND a.aktif
+                    AND (a.durum <> 'KULLANIMDA' OR a.sonraki_kalibrasyon IS NULL OR a.sonraki_kalibrasyon < (now() AT TIME ZONE f.saat_dilimi)::date)) AS gecmis_kalibrasyon,
+                (SELECT count(*) FROM egitim e JOIN firma f ON f.id = e.firma_id WHERE e.firma_id = $1
+                    AND e.gecerlilik_bitis < (now() AT TIME ZONE f.saat_dilimi)::date
+                    AND NOT EXISTS (SELECT 1 FROM egitim y WHERE y.kullanici_id = e.kullanici_id AND y.konu = e.konu AND y.tarih > e.tarih)) AS suresi_dolan_egitim`,
+        [F]),
+    ]);
+    const u = uretim.rows[0];
+    const uretilen = yuvarla(u.top + u.kr, 2);
+    const kul = await kullanilabilirlik(pool, F, bas, bit);
+    const H = { ilkParcaIlkSeferde: 95, fireOrani: 2, karantinaOrani: 3, zamanindaTamamlama: 95, musteriIadePpm: 500, kullanilabilirlik: 85, ...(v.ayarlar.kpiHedefleri || {}) };
+    const g = (ad, baslik, deger, hedef, yon, formul, pay, payda, birim = "%") => ({
+      ad, baslik, deger, hedef, yon, birim, formul, pay, payda,
+      hedefte: deger === null ? null : yon === "yuksek" ? deger >= hedef : deger <= hedef,
+    });
+    const i = ilk.rows[0];
+    const t = teslim.rows[0];
+    const sevkM = yuvarla(sevk.rows[0].sevk, 2);
+    const iadeM = yuvarla(iade.rows[0].iade, 2);
+    const hurdaM = yuvarla(hurda.rows[0].hurda, 2);
+    res.json({
+      baslangic: bas,
+      bitis: bit,
+      gostergeler: [
+        g("ilkParcaIlkSeferde", "İlk parça ilk seferde onay", oran(i.ilk_seferde, i.toplam), H.ilkParcaIlkSeferde, "yuksek",
+          "ilk denemede tüm ölçümleri uygun iş emri / ilk parça ölçümü yapılan iş emri × 100", i.ilk_seferde, i.toplam),
+        g("fireOrani", "Fire (hurda) oranı", oran(hurdaM, uretilen), H.fireOrani, "dusuk",
+          "dönemde hurdaya yazılan metre / dönemde üretilen metre (top + karantina) × 100", hurdaM, uretilen),
+        g("karantinaOrani", "Karantina oranı", oran(u.kr, uretilen), H.karantinaOrani, "dusuk",
+          "üretimde karantinaya ayrılan metre / üretilen metre × 100", yuvarla(u.kr, 2), uretilen),
+        g("zamanindaTamamlama", "Zamanında tamamlanan iş emri", oran(t.zamaninda, t.toplam), H.zamanindaTamamlama, "yuksek",
+          "planlanan tarihte ya da önce biten iş emri / dönemde biten planlı iş emri × 100", t.zamaninda, t.toplam),
+        g("musteriIadePpm", "Müşteri iadesi (ppm)", oran(iadeM, sevkM, 1e6), H.musteriIadePpm, "dusuk",
+          "müşteriden iade gelen metre / sevk edilen metre × 1.000.000", iadeM, sevkM, "ppm"),
+        g("kullanilabilirlik", "Makine kullanılabilirliği", kul.deger, H.kullanilabilirlik, "yuksek",
+          "(planlı süre − planlı bakım − arıza duruşu) / (planlı süre − planlı bakım) × 100; duruşlar bakım/arıza kayıtlarındaki dakikalar", yuvarla(kul.planliDk - kul.planliDurusDk - kul.plansizDurusDk, 2), yuvarla(kul.planliDk - kul.planliDurusDk, 2)),
+      ],
+      kullanilabilirlik: kul,
+      uyarilar: sayilar.rows[0],
+    });
+  }),
+);
+
+// GET /api/panel/makineler/:kod  -> makine karti: su anki is, bakim / ariza kayitlari, son is emirleri, son 7 gun
+router.get(
+  "/makineler/:kod",
+  sar(async (req, res) => {
+    const F = req.ctx.firmaId;
+    const kod = String(req.params.kod).toUpperCase();
+    const m = (await pool.query("SELECT * FROM makine WHERE firma_id = $1 AND kod = $2", [F, kod])).rows[0];
+    if (!m) return res.status(404).json({ hata: { kod: "BULUNAMADI", mesaj: "Makine bulunamadi" } });
+    const [ie, bakimlar, isEmirleri, gunler] = await Promise.all([
+      pool.query(
+        `SELECT ie.no, ie.durum, ie.hedef_miktar, ie.baslangic, u.kod AS urun_kod, u.ad AS urun_ad,
+                (SELECT COALESCE(sum(ilk_miktar), 0) FROM birim WHERE is_emri_id = ie.id AND tip = 'FG_LOT' AND durum <> 'IPTAL') AS uretilen,
+                (SELECT COALESCE(sum(ilk_miktar), 0) FROM birim WHERE is_emri_id = ie.id AND tip = 'KR' AND durum <> 'IPTAL') AS karantina
+           FROM is_emri ie JOIN urun u ON u.id = ie.urun_id
+          WHERE ie.makine_id = $1 AND ie.durum IN ('URETIMDE','ILK_PARCA_BEKLIYOR','DURAKLATILDI') ORDER BY ie.baslangic DESC NULLS LAST LIMIT 1`,
+        [m.id]),
+      pool.query(
+        `SELECT bk.*, k.ad_soyad AS kaydeden_ad FROM bakim bk LEFT JOIN kullanici k ON k.id = bk.kaydeden
+          WHERE bk.makine_id = $1 ORDER BY bk.tarih DESC, bk.zaman DESC LIMIT 20`,
+        [m.id]),
+      pool.query(
+        `SELECT ie.no, ie.durum, ie.hedef_miktar, ie.baslangic, ie.bitis, u.kod AS urun_kod
+           FROM is_emri ie JOIN urun u ON u.id = ie.urun_id WHERE ie.makine_id = $1 ORDER BY ie.olusturma_zamani DESC LIMIT 10`,
+        [m.id]),
+      pool.query(
+        `SELECT to_char((now() AT TIME ZONE saat_dilimi)::date, 'YYYY-MM-DD') AS bugun,
+                to_char((now() AT TIME ZONE saat_dilimi)::date - 6, 'YYYY-MM-DD') AS once FROM firma WHERE id = $1`, [F]),
+    ]);
+    const g = gunler.rows[0];
+    res.json({
+      makine: m,
+      isEmri: ie.rows[0] || null,
+      bakimlar: bakimlar.rows,
+      isEmirleri: isEmirleri.rows,
+      son7Gun: await kullanilabilirlik(pool, F, g.once, g.bugun, kod),
+    });
   }),
 );
 

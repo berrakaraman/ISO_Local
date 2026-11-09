@@ -10,10 +10,28 @@ const { yeniNumara } = require("../services/numara");
 const { olayYaz, izYaz, farklar } = require("../services/iz");
 const { etiketBas } = require("../services/etiket");
 const { birimBul, birimOlustur, bagla, birimGuncelle, blokeKontrol, firmaAyarlari } = require("../services/birim");
-const { onayOlustur } = require("../services/onay");
+const { onayOlustur, onayKontrol, onaySifirla } = require("../services/onay");
+const { yuvarla, sifirMi } = require("../lib/miktar");
+const { aletKontrol } = require("../services/alet");
 
 const router = express.Router();
-const yuvarla = (n, h = 2) => (n === null || n === undefined ? null : Math.round(n * 10 ** h) / 10 ** h);
+
+// Urun karti uretime hazir mi? Recete (gram/metre) ve kontrol plani olmadan
+// miktar dengesi ve kalite gecitleri calismaz; is emri acilmaz (bolum 6.3, 11).
+async function urunHazirMi(c, urunId) {
+  const r = await bir(
+    c,
+    `SELECT (SELECT count(*) FROM recete WHERE urun_id = $1) AS recete,
+            (SELECT count(*) FROM karakteristik WHERE urun_id = $1 AND asama = 'ILK_PARCA' AND aktif) AS ilk_parca,
+            (SELECT count(*) FROM karakteristik WHERE urun_id = $1 AND asama = 'METRAJ' AND aktif) AS metraj`,
+    [urunId],
+  );
+  const eksik = [];
+  if (!r.recete) eksik.push("recete (gram/metre)");
+  if (!r.ilk_parca) eksik.push("ilk parca kontrol plani");
+  if (!r.metraj) eksik.push("metraj kontrol plani");
+  return eksik;
+}
 
 async function isEmriBul(c, F, no, { kilit = true } = {}) {
   const ie = await bir(
@@ -69,7 +87,15 @@ router.post(
       if (!urun) throw hatalar.gecersiz("Urun bulunamadi veya pasif");
       const makine = await bir(c, "SELECT * FROM makine WHERE id = $1 AND firma_id = $2 AND aktif", [makineId, F]);
       if (!makine) throw hatalar.gecersiz("Makine bulunamadi veya pasif");
+      const eksik = await urunHazirMi(c, urun.id);
+      if (eksik.length) throw hatalar.engel(`${urun.kod} urun kartinda eksik var: ${eksik.join(", ")}. Tanimlar'dan tamamlayin.`, "URUN_KARTI_EKSIK");
+      if (b.musteriId) {
+        const mu = await bir(c, "SELECT 1 FROM musteri WHERE id = $1 AND firma_id = $2 AND aktif", [b.musteriId, F]);
+        if (!mu) throw hatalar.gecersiz("Musteri bulunamadi veya pasif");
+      }
+      if (b.planlananTarih && !/^\d{4}-\d{2}-\d{2}$/.test(String(b.planlananTarih))) throw hatalar.gecersiz("Planlanan tarih YYYY-AA-GG olmali");
       const ayar = await firmaAyarlari(c, F);
+      const atananId = d.metin(b.atananId, "Is emrini onaylayacak kisi", { zorunlu: ayar.isEmriOnayZorunlu !== false, max: 40 });
       const no = await yeniNumara(c, F, "IE", ayar.saatDilimi);
       const ie = await bir(
         c,
@@ -84,7 +110,6 @@ router.post(
         tablo: "is_emri", kayitId: ie.id, islem: "EKLEME",
         degisiklikler: [{ alan: "is_emri", eski: null, yeni: `${no} - ${urun.kod} ${hedef} ${urun.olcu_birimi} - ${makine.kod}` }],
       });
-      const atananId = d.metin(b.atananId, "Onaylayacak kisi", { zorunlu: false, max: 40 });
       const onay = atananId ? await onayOlustur(c, req.ctx, { kayitTuru: "IS_EMRI", kayitNo: no, atananId }) : null;
       const recete = await c.query(
         `SELECT m.kod, m.ad, r.gram_metre, round($2 * r.gram_metre / 1000, 2) AS ihtiyac_kg
@@ -167,8 +192,10 @@ router.get(
       ),
       sayaclar(pool, ie.id),
     ]);
+    const proses = await prosesDurumu(pool, ie);
     res.json({
       isEmri: ie,
+      prosesDurumu: proses,
       sayaclar: sayac,
       baglamalar: baglamalar.rows,
       toplar: birimler.rows.filter((b) => b.tip === "FG_LOT"),
@@ -188,20 +215,24 @@ router.post(
     const sonuc = await tx(async (c) => {
       const ie = await isEmriBul(c, req.ctx.firmaId, req.params.no);
       durumBekle(ie, [S.PLANLANDI, S.DURAKLATILDI], "baslatma");
-      const onay = await bir(c, "SELECT durum FROM onay WHERE firma_id = $1 AND kayit_turu = 'IS_EMRI' AND kayit_no = $2", [ie.firma_id, ie.no]);
-      if (onay && onay.durum !== "ONAYLANDI") throw hatalar.engel(`${ie.no} henuz onaylanmadi, uretime baslanamaz`, "ONAY_BEKLIYOR");
+      const ayar = await firmaAyarlari(c, req.ctx.firmaId);
+      await onayKontrol(c, req.ctx.firmaId, "IS_EMRI", ie.no, { zorunlu: ayar.isEmriOnayZorunlu !== false, islem: "uretime baslanamaz" });
       const baska = await bir(
         c,
         `SELECT no FROM is_emri WHERE makine_id = $1 AND id <> $2 AND durum IN ('URETIMDE','ILK_PARCA_BEKLIYOR')`,
         [ie.makine_id, ie.id],
       );
       if (baska) throw hatalar.engel(`${ie.makine_kod} makinesinde ${baska.no} zaten calisiyor`, "MAKINE_DOLU");
-      await durumDegistir(c, req.ctx, ie, S.ILK_PARCA_BEKLIYOR);
+      // Ilk parca onayi yalnizca isin en basinda istenir. Bir kez onaylandiysa duraklatmadan donuste
+      // dogrudan uretime gecilir (proses olcumu tolerans disiysa top, uygun proses olcumu olmadan kapanmaz).
+      const ilkParcaVar = await bir(c, "SELECT 1 FROM olcum WHERE is_emri_id = $1 AND asama = 'ILK_PARCA' AND sonuc = 'UYGUN' LIMIT 1", [ie.id]);
+      const yeni = ilkParcaVar ? S.URETIMDE : S.ILK_PARCA_BEKLIYOR;
+      await durumDegistir(c, req.ctx, ie, yeni);
       if (!ie.baslangic) {
         await c.query("UPDATE is_emri SET baslangic = now() WHERE id = $1", [ie.id]);
         await olayYaz(c, req.ctx, { tip: OLAY.IS_EMRI_BASLADI, isEmriId: ie.id, aciklama: ie.makine_kod });
       }
-      return { no: ie.no, durum: S.ILK_PARCA_BEKLIYOR };
+      return { no: ie.no, durum: yeni };
     });
     res.json(sonuc);
   }),
@@ -255,13 +286,14 @@ router.post(
 // Bir baglamayi kapatir: tuketilen = baglanan - kalan
 async function baglamaKapat(c, ctx, ie, g, kalan) {
   const birim = await bir(c, "SELECT * FROM birim WHERE id = $1 FOR UPDATE", [g.birim_id]);
-  if (kalan > g.baglama_miktari) throw hatalar.gecersiz(`${birim.barkod}: kalan miktar baglanan miktardan (${g.baglama_miktari}) fazla olamaz`);
-  const tuketilen = yuvarla(g.baglama_miktari - kalan, 3);
+  kalan = yuvarla(kalan);
+  if (kalan > yuvarla(g.baglama_miktari)) throw hatalar.gecersiz(`${birim.barkod}: kalan miktar baglanan miktardan (${g.baglama_miktari}) fazla olamaz`);
+  const tuketilen = yuvarla(g.baglama_miktari - kalan);
   await c.query("UPDATE is_emri_baglama SET cikarma_zamani = now(), tuketilen = $1 WHERE id = $2", [tuketilen, g.id]);
   await birimGuncelle(c, ctx, birim.id, {
     miktar: kalan,
-    yer: kalan > 0 ? "DEPO" : birim.yer,
-    durum: kalan > 0 ? birim.durum : D.TUKENDI,
+    yer: !sifirMi(kalan) ? "DEPO" : birim.yer,
+    durum: !sifirMi(kalan) ? birim.durum : D.TUKENDI,
   });
   if (tuketilen > 0) {
     await olayYaz(c, ctx, { tip: OLAY.TUKETIM, birimId: birim.id, isEmriId: ie.id, miktar: tuketilen, olcuBirimi: birim.olcu_birimi, aciklama: ie.no });
@@ -280,6 +312,8 @@ router.post(
     const sonuc = await tx(async (c) => {
       const F = req.ctx.firmaId;
       const ie = await isEmriBul(c, F, req.params.no);
+      durumBekle(ie, [S.ILK_PARCA_BEKLIYOR, S.URETIMDE, S.DURAKLATILDI], "hammadde cikarma");
+      if (req.body.kalanMiktar === undefined || req.body.kalanMiktar === "") throw hatalar.gecersiz("Kalan miktar zorunlu (bitmisse 0 girin)");
       const birim = await birimBul(c, F, req.body.barkod, { kilit: false });
       const g = await bir(c, "SELECT * FROM is_emri_baglama WHERE is_emri_id = $1 AND birim_id = $2 AND cikarma_zamani IS NULL FOR UPDATE", [ie.id, birim.id]);
       if (!g) throw hatalar.engel(`${birim.barkod} bu is emrine bagli degil`, "BAGLI_DEGIL");
@@ -300,6 +334,7 @@ router.post(
       const ie = await isEmriBul(c, F, req.params.no);
       durumBekle(ie, [S.ILK_PARCA_BEKLIYOR], "ilk parca onayi");
       const ayar = await firmaAyarlari(c, F);
+      const alet = await aletKontrol(c, F, req.body.aletKod, { zorunlu: ayar.olcumAletiZorunlu === true });
       const kalite = req.kullanici.roller.some((r) => r === ROLLER.KALITE || r === ROLLER.ADMIN);
       if (!kalite && !ayar.ilkParcaOperatorOnaylayabilir) throw hatalar.yasak("Ilk parca onayini kalite verir");
 
@@ -315,9 +350,9 @@ router.post(
         const deger = d.sayi(o.deger, k.ad);
         const uygun = (k.alt_sinir === null || deger >= k.alt_sinir) && (k.ust_sinir === null || deger <= k.ust_sinir);
         await c.query(
-          `INSERT INTO olcum (firma_id, is_emri_id, karakteristik_id, asama, deger, sonuc, deneme_no, kullanici_id)
-           VALUES ($1,$2,$3,'ILK_PARCA',$4,$5,$6,$7)`,
-          [F, ie.id, k.id, deger, uygun ? "UYGUN" : "UYGUN_DEGIL", deneme, req.ctx.kullaniciId],
+          `INSERT INTO olcum (firma_id, is_emri_id, karakteristik_id, asama, deger, sonuc, deneme_no, kullanici_id, alet_id)
+           VALUES ($1,$2,$3,'ILK_PARCA',$4,$5,$6,$7,$8)`,
+          [F, ie.id, k.id, deger, uygun ? "UYGUN" : "UYGUN_DEGIL", deneme, req.ctx.kullaniciId, alet?.id || null],
         );
         sonuclar.push({ karakteristik: k.ad, deger, altSinir: k.alt_sinir, ustSinir: k.ust_sinir, uygun });
       }
@@ -342,7 +377,7 @@ router.post(
     const sonuc = await tx(async (c) => {
       const F = req.ctx.firmaId;
       const ie = await isEmriBul(c, F, req.params.no);
-      durumBekle(ie, [S.URETIMDE, S.ILK_PARCA_BEKLIYOR], "karantina kaydi");
+      durumBekle(ie, [S.URETIMDE, S.ILK_PARCA_BEKLIYOR, S.DURAKLATILDI], "karantina kaydi");
       const hata = await bir(c, "SELECT * FROM hata_kodu WHERE firma_id = $1 AND kod = $2 AND aktif", [F, String(req.body.hataKodu || "").toUpperCase()]);
       if (!hata) throw hatalar.gecersiz("Hata kodu bulunamadi");
       const ayar = await firmaAyarlari(c, F);
@@ -375,12 +410,34 @@ router.post(
       const ie = await isEmriBul(c, F, req.params.no);
       if (ie.durum === S.ILK_PARCA_BEKLIYOR) throw hatalar.engel("Ilk parca onayi verilmeden top bitirilemez", "ILK_PARCA_YOK");
       durumBekle(ie, [S.URETIMDE], "top bitirme");
-      const baglilar = await c.query("SELECT count(*) AS n FROM is_emri_baglama WHERE is_emri_id = $1", [ie.id]);
-      if (!baglilar.rows[0].n) throw hatalar.engel("Bu is emrine hic hammadde baglanmamis. Once hammadde okutun.", "HAMMADDE_YOK");
-
+      const pd = await prosesDurumu(c, ie);
+      if (pd.duzeltmeBekliyor) {
+        throw hatalar.engel("Son proses olcumu uygun degildi. Ayari duzeltip uygun bir proses olcumu yapmadan top kapatilamaz.", "PROSES_UYGUN_DEGIL");
+      }
+      if (pd.gecikti) {
+        throw hatalar.engel(
+          `Periyodik proses olcumu gecikti (son uygun olcum ${pd.gecenDk} dk once, aralik ${pd.aralikDk} dk). Once proses olcumu yapin.`,
+          "PROSES_OLCUM_GECIKTI",
+        );
+      }
       // Bu topun baslangici: onceki topun bitisi ya da is emrinin baslangici
       const onceki = await bir(c, "SELECT max(olusturma_zamani) AS t FROM birim WHERE is_emri_id = $1 AND tip = 'FG_LOT'", [ie.id]);
       const baslangic = onceki.t || ie.baslangic;
+
+      // Bu top uretilirken makinede hammadde olmali; su an bagli olanlar hala kullanilabilir olmali
+      const kullanilan = await c.query(
+        `SELECT g.birim_id, g.cikarma_zamani, b.barkod, b.durum, b.bloke FROM is_emri_baglama g JOIN birim b ON b.id = g.birim_id
+          WHERE g.is_emri_id = $1 AND (g.cikarma_zamani IS NULL OR g.cikarma_zamani >= $2)`,
+        [ie.id, baslangic],
+      );
+      if (!kullanilan.rows.length) throw hatalar.engel("Bu top icin makineye hic hammadde baglanmamis. Once hammadde okutun.", "HAMMADDE_YOK");
+      const sorunlu = kullanilan.rows.filter((x) => !x.cikarma_zamani && (x.bloke || x.durum !== D.KABUL));
+      if (sorunlu.length) {
+        throw hatalar.engel(
+          `Makinedeki hammadde artik kullanilamaz: ${sorunlu.map((x) => `${x.barkod} (${x.bloke ? "BLOKE" : x.durum})`).join(", ")}. Kalite kararini bekleyin ya da ambalaji cikarin.`,
+          "HAMMADDE_ONAYSIZ",
+        );
+      }
 
       const ayar = await firmaAyarlari(c, F);
       const lotNo = await yeniNumara(c, F, "FG", ayar.saatDilimi);
@@ -396,12 +453,7 @@ router.post(
       });
 
       // Bu top uretilirken bagli olan hammaddeler -> top (soy agaci)
-      const g = await c.query(
-        `SELECT birim_id FROM is_emri_baglama
-          WHERE is_emri_id = $1 AND baglama_zamani <= now() AND (cikarma_zamani IS NULL OR cikarma_zamani >= $2)`,
-        [ie.id, baslangic],
-      );
-      for (const r of g.rows) await bagla(c, req.ctx, r.birim_id, top.id, "TUKETILDI");
+      for (const r of kullanilan.rows) await bagla(c, req.ctx, r.birim_id, top.id, "TUKETILDI");
 
       // Bu topun uretimi sirasinda ayrilan karantina parcalari bu lota baglanir
       const kr = await c.query("SELECT id FROM birim WHERE is_emri_id = $1 AND tip = 'KR' AND lot_id IS NULL", [ie.id]);
@@ -420,7 +472,7 @@ router.post(
         if (rc.gm) {
           const beklenen = (metraj * rc.gm) / 1000;
           const fark = Math.abs(agirlik - beklenen) / beklenen;
-          if (fark > 0.05) uyari = `Agirlik metrajla uyumsuz: beklenen ~${yuvarla(beklenen)} kg, girilen ${agirlik} kg. Metraji kontrol edin.`;
+          if (fark > 0.05) uyari = `Agirlik metrajla uyumsuz: beklenen ~${yuvarla(beklenen, 2)} kg, girilen ${agirlik} kg. Metraji kontrol edin.`;
         }
       }
       return { lot, top, etiket, uyari, karantinaBaglanan: kr.rows.length, sayaclar: await sayaclar(c, ie.id) };
@@ -429,22 +481,119 @@ router.post(
   }),
 );
 
-// POST /api/is-emirleri/:no/duraklat  { gerekce? }
+// POST /api/is-emirleri/:no/duraklat  { gerekce? }  -> is durur (mola, ariza, malzeme bekleme...).
+// Durus suresi tutulmaz; ariza / bakim KYS'de elle kaydedilir (makine, tarih, durus dk).
 router.post(
   "/:no/duraklat",
   rol(ROLLER.OPERATOR, ROLLER.SEF),
   sar(async (req, res) => {
+    const gerekce = d.metin(req.body.gerekce, "Aciklama", { zorunlu: false, max: 1000 });
     const sonuc = await tx(async (c) => {
       const ie = await isEmriBul(c, req.ctx.firmaId, req.params.no);
       durumBekle(ie, [S.URETIMDE, S.ILK_PARCA_BEKLIYOR], "duraklatma");
-      await durumDegistir(c, req.ctx, ie, S.DURAKLATILDI, req.body.gerekce);
+      await durumDegistir(c, req.ctx, ie, S.DURAKLATILDI, gerekce);
       return { no: ie.no, durum: S.DURAKLATILDI };
     });
     res.json(sonuc);
   }),
 );
 
+// Periyodik proses olcumu durumu: son uygun olcumden (ilk parca ya da proses) bu yana gecen sure
+async function prosesDurumu(c, ie) {
+  const ayar = await firmaAyarlari(c, ie.firma_id);
+  const plan = await bir(c, "SELECT count(*) AS n FROM karakteristik WHERE urun_id = $1 AND asama = 'PROSES' AND aktif", [ie.urun_id]);
+  const aralikDk = Number(ayar.prosesOlcumAraligiDk ?? 120);
+  const son = await bir(
+    c,
+    `SELECT max(zaman) AS t, round((extract(epoch FROM now() - max(zaman)) / 60)::numeric, 1) AS gecen
+       FROM olcum WHERE is_emri_id = $1 AND asama IN ('ILK_PARCA','PROSES') AND sonuc = 'UYGUN'`,
+    [ie.id],
+  );
+  // En son olcum seti (ayni anda kaydedilen satirlar) proses olcumu ve icinde uygun olmayan varsa:
+  // ayar duzeltilip uygun bir proses olcumu yapilmadan top kapatilamaz.
+  const sonSet = await bir(
+    c,
+    `SELECT bool_or(sonuc = 'UYGUN_DEGIL') AS kotu, bool_and(asama = 'PROSES') AS proses FROM olcum
+      WHERE is_emri_id = $1 AND asama IN ('ILK_PARCA','PROSES')
+        AND zaman = (SELECT max(zaman) FROM olcum WHERE is_emri_id = $1 AND asama IN ('ILK_PARCA','PROSES'))`,
+    [ie.id],
+  );
+  const planVar = plan.n > 0;
+  return {
+    planVar,
+    aralikDk,
+    sonOlcum: son.t,
+    gecenDk: son.gecen,
+    duzeltmeBekliyor: !!(sonSet && sonSet.proses && sonSet.kotu),
+    gecikti: planVar && ie.durum === S.URETIMDE && aralikDk > 0 && son.t !== null && Number(son.gecen) > aralikDk,
+  };
+}
+
+// POST /api/is-emirleri/:no/proses-olcum  { olcumler: [{ karakteristikId, deger }], aletKod? }
+// Uretim sirasinda periyodik kontrol. Bir deger bile tolerans disiysa is emri otomatik DURAKLATILDI olur,
+// Operator ayari duzeltip "Devam et" der; top kapatilmadan once uygun bir proses olcumu yapilmalidir.
+router.post(
+  "/:no/proses-olcum",
+  rol(ROLLER.OPERATOR, ROLLER.KALITE, ROLLER.SEF),
+  sar(async (req, res) => {
+    const olcumler = d.dizi(req.body.olcumler, "Olcumler", { min: 1, max: 50 });
+    const sonuc = await tx(async (c) => {
+      const F = req.ctx.firmaId;
+      const ie = await isEmriBul(c, F, req.params.no);
+      durumBekle(ie, [S.URETIMDE], "proses olcumu");
+      const ayar = await firmaAyarlari(c, F);
+      const alet = await aletKontrol(c, F, req.body.aletKod, { zorunlu: ayar.olcumAletiZorunlu === true });
+      const kars = (await c.query("SELECT * FROM karakteristik WHERE urun_id = $1 AND asama = 'PROSES' AND aktif ORDER BY sira", [ie.urun_id])).rows;
+      if (!kars.length) throw hatalar.engel(`${ie.urun_kod} icin proses kontrol plani tanimli degil`, "KONTROL_PLANI_YOK");
+      const eksik = kars.filter((k) => !olcumler.some((o) => o.karakteristikId === k.id));
+      if (eksik.length) throw hatalar.gecersiz(`Eksik olcum: ${eksik.map((k) => k.ad).join(", ")}`);
+      const deneme = (await bir(c, "SELECT COALESCE(max(deneme_no),0)+1 AS n FROM olcum WHERE is_emri_id = $1 AND asama = 'PROSES'", [ie.id])).n;
+      const sonuclar = [];
+      for (const o of olcumler) {
+        const k = kars.find((x) => x.id === o.karakteristikId);
+        if (!k) throw hatalar.gecersiz("Karakteristik bu urunun proses planinda yok");
+        const deger = d.sayi(o.deger, k.ad);
+        const uygun = (k.alt_sinir === null || deger >= k.alt_sinir) && (k.ust_sinir === null || deger <= k.ust_sinir);
+        await c.query(
+          `INSERT INTO olcum (firma_id, is_emri_id, karakteristik_id, asama, deger, sonuc, deneme_no, kullanici_id, alet_id)
+           VALUES ($1,$2,$3,'PROSES',$4,$5,$6,$7,$8)`,
+          [F, ie.id, k.id, deger, uygun ? "UYGUN" : "UYGUN_DEGIL", deneme, req.ctx.kullaniciId, alet?.id || null],
+        );
+        sonuclar.push({ karakteristik: k.ad, deger, altSinir: k.alt_sinir, ustSinir: k.ust_sinir, uygun });
+      }
+      const hepsiUygun = sonuclar.every((x) => x.uygun);
+      // Son uygun olcum: bu ana kadar uretilen ve henuz top olarak kapanmamis kisim suphelidir
+      const onceki = await bir(
+        c,
+        "SELECT max(zaman) AS t FROM olcum WHERE is_emri_id = $1 AND asama IN ('ILK_PARCA','PROSES') AND sonuc = 'UYGUN' AND NOT (asama = 'PROSES' AND deneme_no = $2)",
+        [ie.id, deneme],
+      );
+      await olayYaz(c, req.ctx, {
+        tip: OLAY.PROSES_OLCUM, isEmriId: ie.id,
+        aciklama: hepsiUygun ? "Proses olcumu uygun" : "Proses olcumu tolerans disi - is emri durduruldu",
+        veri: { deneme, sonuclar },
+      });
+      if (!hepsiUygun) {
+        await durumDegistir(c, req.ctx, ie, S.DURAKLATILDI,
+          `Proses olcumu tolerans disi: ${sonuclar.filter((x) => !x.uygun).map((x) => `${x.karakteristik} ${x.deger}`).join(", ")}`);
+      }
+      return {
+        uygun: hepsiUygun,
+        deneme,
+        sonuclar,
+        durum: hepsiUygun ? S.URETIMDE : S.DURAKLATILDI,
+        supheliAralik: hepsiUygun ? null : { baslangic: onceki.t, bitis: new Date().toISOString() },
+      };
+    });
+    res.json(sonuc);
+  }),
+);
+
 // Miktar dengesi (bolum 11)
+// Recetedeki HER malzeme icin: bu kadar kg tuketildiyse en fazla kac metre uretilebilirdi?
+//   beklenen_i = tuketilen_kg_i * 1000 / gram_metre_i   (hic tuketilmediyse 0)
+// Urun tum malzemelere ihtiyac duydugu icin beklenen = en kucuk beklenen_i.
+// Uretilen = top metrajlari + karantinaya ayrilanlar (karantina da makineden cikan urundur).
 async function dengeHesapla(c, ie, toleransYuzde) {
   const tuketim = await c.query(
     `SELECT b.malzeme_id, m.kod, sum(g.tuketilen) AS kg
@@ -452,19 +601,31 @@ async function dengeHesapla(c, ie, toleransYuzde) {
       WHERE g.is_emri_id = $1 GROUP BY b.malzeme_id, m.kod`,
     [ie.id],
   );
-  const recete = await c.query("SELECT malzeme_id, gram_metre FROM recete WHERE urun_id = $1", [ie.urun_id]);
+  const recete = await c.query(
+    "SELECT r.malzeme_id, r.gram_metre, m.kod FROM recete r JOIN malzeme m ON m.id = r.malzeme_id WHERE r.urun_id = $1 ORDER BY m.kod",
+    [ie.urun_id],
+  );
   const sayac = await sayaclar(c, ie.id);
-  const kalemler = tuketim.rows.map((t) => {
-    const r = recete.rows.find((x) => x.malzeme_id === t.malzeme_id);
-    return { malzeme: t.kod, tuketilenKg: yuvarla(t.kg, 3), gramMetre: r?.gram_metre ?? null, beklenenMetraj: r ? yuvarla((t.kg * 1000) / r.gram_metre) : null };
+  const kalemler = recete.rows.map((r) => {
+    const t = tuketim.rows.find((x) => x.malzeme_id === r.malzeme_id);
+    const kg = yuvarla(t ? t.kg : 0);
+    return {
+      malzeme: r.kod,
+      tuketilenKg: kg,
+      gramMetre: r.gram_metre,
+      gerekenKg: yuvarla(((sayac.uretilen + sayac.karantina) * r.gram_metre) / 1000),
+      beklenenMetraj: yuvarla((kg * 1000) / r.gram_metre, 2),
+      eksik: kg === 0,
+    };
   });
-  const adaylar = kalemler.map((k) => k.beklenenMetraj).filter((x) => x !== null);
-  const beklenen = adaylar.length ? Math.min(...adaylar) : null;
-  const uretilenToplam = yuvarla(sayac.uretilen + sayac.karantina);
-  const fark = beklenen !== null ? yuvarla(beklenen - uretilenToplam) : null;
-  const farkYuzde = beklenen ? yuvarla((fark / beklenen) * 100) : null;
+  const beklenen = kalemler.length ? Math.min(...kalemler.map((k) => k.beklenenMetraj)) : null;
+  const uretilenToplam = yuvarla(sayac.uretilen + sayac.karantina, 2);
+  const fark = beklenen !== null ? yuvarla(beklenen - uretilenToplam, 2) : null;
+  const farkYuzde = beklenen ? yuvarla((fark / beklenen) * 100, 2) : beklenen === 0 && uretilenToplam > 0 ? -100 : null;
+  const hedef = Number(ie.hedef_miktar);
   return {
     kalemler,
+    eksikMalzeme: kalemler.filter((k) => k.eksik).map((k) => k.malzeme),
     beklenenMetraj: beklenen,
     topMetraji: sayac.uretilen,
     karantina: sayac.karantina,
@@ -473,6 +634,9 @@ async function dengeHesapla(c, ie, toleransYuzde) {
     farkYuzde,
     toleransYuzde,
     toleransAsildi: farkYuzde !== null && Math.abs(farkYuzde) > toleransYuzde,
+    hedefMiktar: hedef,
+    hedefFarki: yuvarla(uretilenToplam - hedef, 2),
+    hedefGerceklesmeYuzde: hedef > 0 ? yuvarla((uretilenToplam / hedef) * 100, 2) : null,
   };
 }
 
@@ -540,15 +704,24 @@ router.patch(
       if ("planlananTarih" in b) yeni.planlanan_tarih = b.planlananTarih || null;
       if ("makineId" in b) {
         if (ie.durum !== S.PLANLANDI) throw hatalar.engel("Makine yalnizca baslamamis is emrinde degistirilebilir", "YANLIS_DURUM");
-        yeni.makine_id = d.metin(b.makineId, "Makine", { max: 40 });
+        const mk = await bir(c, "SELECT id FROM makine WHERE id = $1 AND firma_id = $2 AND aktif", [d.metin(b.makineId, "Makine", { max: 40 }), req.ctx.firmaId]);
+        if (!mk) throw hatalar.gecersiz("Makine bulunamadi veya pasif");
+        yeni.makine_id = mk.id;
       }
+      if ("planlananTarih" in b && b.planlananTarih && !/^\d{4}-\d{2}-\d{2}$/.test(String(b.planlananTarih))) throw hatalar.gecersiz("Planlanan tarih YYYY-AA-GG olmali");
       const kolonlar = Object.keys(yeni);
       if (!kolonlar.length) throw hatalar.gecersiz("Degistirilecek alan yok");
       const gerekce = d.metin(b.gerekce, "Gerekce", { zorunlu: ie.durum !== S.PLANLANDI, max: 1000 });
       const set = kolonlar.map((k, i) => `${k} = $${i + 2}`).join(", ");
       const r = await bir(c, `UPDATE is_emri SET ${set} WHERE id = $1 RETURNING *`, [ie.id, ...kolonlar.map((k) => yeni[k])]);
-      await izYaz(c, req.ctx, { tablo: "is_emri", kayitId: ie.id, islem: "GUNCELLEME", degisiklikler: farklar(ie, yeni, kolonlar), gerekce });
-      return r;
+      const degisenler = farklar(ie, yeni, kolonlar);
+      await izYaz(c, req.ctx, { tablo: "is_emri", kayitId: ie.id, islem: "GUNCELLEME", degisiklikler: degisenler, gerekce });
+      // Onaylanmis ama baslamamis is emrinin miktari/makinesi degisirse onay gecersiz olur, yeniden onay gerekir
+      const kritik = degisenler.some((x) => ["hedef_miktar", "makine_id"].includes(x.alan));
+      const onaySifirlandi = kritik && ie.durum === S.PLANLANDI
+        ? await onaySifirla(c, req.ctx, "IS_EMRI", ie.no, `Is emri degisti (${degisenler.map((x) => x.alan).join(", ")}), yeniden onay gerekli`)
+        : false;
+      return { ...r, onaySifirlandi };
     });
     res.json(sonuc);
   }),

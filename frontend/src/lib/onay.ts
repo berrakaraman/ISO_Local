@@ -64,10 +64,13 @@ export const ONAYLAYAN_ROL: Partial<Record<OnayTuru, string>> = {
   KALITE: "KALITE",
 };
 
-export function useKisiler(rol?: string) {
+// Onaya atanabilecek kisiler. Kisinin kendisi listede gelmez (kendi kaydini onaylayamaz).
+// tur verilirse yalnizca o kayit turunu onaylama yetkisi olanlar gelir (ornek: IS_EMRI -> kalite / yonetim).
+export function useKisiler(rol?: string, tur?: OnayTuru) {
+  const q = tur ? `?tur=${tur}` : rol ? `?rol=${rol}` : "";
   return useQuery({
-    queryKey: ["onaylar", "kisiler", rol || "hepsi"],
-    queryFn: () => api<Kisi[]>(`/onaylar/kisiler${rol ? `?rol=${rol}` : ""}`),
+    queryKey: ["onaylar", "kisiler", tur || rol || "hepsi"],
+    queryFn: () => api<Kisi[]>(`/onaylar/kisiler${q}`),
     staleTime: 60_000,
   });
 }

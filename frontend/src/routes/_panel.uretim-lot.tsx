@@ -1,7 +1,8 @@
 // F-03 Uretim Lot: her top bir uretim lotudur (F-02'de "Topu bitir" ile olusur).
 // Metraj/kesim (tire 1, tire 2...), sahit numune ve son kontrol buradan yapilir.
 // Miktar dokumu: Toplam = top metraji + karantinaya ayrilan; Uygun + Karantina (karar bekleyen) + Red/Hurda.
-import { createFileRoute, Link } from "@tanstack/react-router";
+// Sira: topu bitir -> SAHIT NUMUNE (toptan kesilir) -> kesim (metraj olcumu) -> son kontrol.
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, ClipboardCheck, Loader2, Printer, Scissors } from "lucide-react";
@@ -29,6 +30,8 @@ function UretimLot() {
   const oturum = useOturum();
   const kalite = rolVar(oturum, "KALITE");
   const kesebilir = rolVar(oturum, "OPERATOR", "SEF", "KALITE");
+  const numuneAlabilir = rolVar(oturum, "KALITE", "OPERATOR");
+  const nav = useNavigate();
   const arama = Route.useSearch() as { ac?: string };
   const [secili, setSecili] = useState<{ no: string; islem?: Panel } | null>(arama.ac ? { no: arama.ac } : null);
   useEffect(() => {
@@ -56,7 +59,7 @@ function UretimLot() {
             "Hammadde Lot No": l.hammaddeLotlari,
             "Toplam Üretim": h.toplam,
             "Uygun Miktar": l.uygun,
-            Karantina: l.karantinaBekleyen,
+            Karantina: h.karantinada,
             "Red/Hurda": h.redHurda,
             "Fire %": h.fire,
             "Lot Durumu": h.durum,
@@ -90,15 +93,25 @@ function UretimLot() {
           }}
           bendeMi={(s) => {
             const l = bul(s.anahtar)!;
-            return (kalite && l.kaliteBekleyen > 0) || (kesebilir && l.topDurum === "KESIM_BEKLIYOR");
+            return (kalite && (l.kaliteBekleyen > 0 || l.topDurum === "KARANTINA")) || (kesebilir && l.topDurum === "KESIM_BEKLIYOR");
           }}
           ekIslem={(s) => {
             const l = bul(s.anahtar)!;
             return (
               <>
-                {kesebilir && l.topDurum === "KESIM_BEKLIYOR" && (
+                {numuneAlabilir && l.topDurum === "KESIM_BEKLIYOR" && !l.numuneBarkod && (
+                  <SatirDugmesi vurgu onClick={() => setSecili({ no: l.no, islem: "numune" })}>
+                    <Archive className="h-3.5 w-3.5" /> Numune al
+                  </SatirDugmesi>
+                )}
+                {kesebilir && l.topDurum === "KESIM_BEKLIYOR" && l.numuneBarkod && (
                   <SatirDugmesi vurgu onClick={() => setSecili({ no: l.no, islem: "kesim" })}>
                     <Scissors className="h-3.5 w-3.5" /> Kes
+                  </SatirDugmesi>
+                )}
+                {kalite && l.topDurum === "KARANTINA" && (
+                  <SatirDugmesi vurgu onClick={() => nav({ to: "/tablo/karantina-red" as any })}>
+                    <ClipboardCheck className="h-3.5 w-3.5" /> Top kararı
                   </SatirDugmesi>
                 )}
                 {kalite && l.kaliteBekleyen > 0 && (
@@ -172,8 +185,8 @@ function LotAyrinti({ no, ilkIslem, kapat }: { no: string; ilkIslem?: Panel; kap
         >
           {h && <DurumRozeti renk={h.renk}>{h.durum}</DurumRozeti>}
           <AkisDugmesi barkod={no} etiket="Akış diyagramı ve bakiye" />
-          {l && dugme("kesim", "Kesim (metraj)", Scissors, rolVar(oturum, "OPERATOR", "SEF", "KALITE") && l.topDurum === "KESIM_BEKLIYOR")}
-          {l && dugme("numune", "Şahit numune", Archive, rolVar(oturum, "KALITE", "OPERATOR") && !l.numuneBarkod)}
+          {l && dugme("numune", "1 · Şahit numune", Archive, rolVar(oturum, "KALITE", "OPERATOR") && l.topDurum === "KESIM_BEKLIYOR" && !l.numuneBarkod)}
+          {l && dugme("kesim", "2 · Kesim (metraj)", Scissors, rolVar(oturum, "OPERATOR", "SEF", "KALITE") && l.topDurum === "KESIM_BEKLIYOR" && !!l.numuneBarkod)}
           {l && dugme("son", "Son kontrol", ClipboardCheck, kalite && l.kaliteBekleyen > 0)}
         </PencereBasligi>
         {!a.data || !l || !h ? (
@@ -185,18 +198,31 @@ function LotAyrinti({ no, ilkIslem, kapat }: { no: string; ilkIslem?: Panel; kap
               {panel === "numune" && <NumunePaneli lot={l} bitti={bitti} />}
               {panel === "son" && <SonKontrolPaneli lot={l} bitti={bitti} />}
               {etiketler.length > 0 && <EtiketListesi barkodlar={etiketler} key={etiketler.join()} />}
+              {l.topDurum === "KESIM_BEKLIYOR" && !l.numuneBarkod && (
+                <div className="rounded-lg bg-dikkat-acik px-3 py-2 text-sm text-dikkat">
+                  Kesimden önce bu toptan şahit numune alınmalı. Numune toptan kesilir ve topun metrajından düşülür.
+                </div>
+              )}
+              {l.topDurum === "KARANTINA" && (
+                <div className="rounded-lg bg-sorun-acik px-3 py-2 text-sm text-unity-koyu">
+                  Metraj ölçümü tolerans dışı çıktı, top karantinada. Kararı kalite verir:{" "}
+                  <Link to={"/tablo/karantina-red" as any} className="font-semibold underline">F-04 Karantina / Red</Link>
+                  {" "}(tekrar ölç ve kes · şartlı kabul · hurda).
+                </div>
+              )}
 
               <BilgiKutulari
                 kutular={[
                   ["Toplam üretim", `${sayi(h.toplam)} ${l.olcuBirimi}`],
                   ["Uygun", `${sayi(l.uygun)} ${l.olcuBirimi}`],
-                  ["Karantinada", `${sayi(l.karantinaBekleyen)} ${l.olcuBirimi}`],
+                  ["Karantinada", `${sayi(h.karantinada)} ${l.olcuBirimi}`],
                   ["Red / hurda", `${sayi(h.redHurda)} ${l.olcuBirimi}`],
                 ]}
               />
+              <DengeKutusu lot={l} />
               <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
                 <div className="text-tas-500">
-                  Fire: <b className="text-murekkep">%{sayi(h.fire * 100, 1)}</b>
+                  Fire (hurda): <b className="text-murekkep">%{sayi(h.fire * 100, 1)}</b>
                 </div>
                 <div className="text-tas-500">
                   Vardiya: <b className="text-murekkep">{vardiya(l.baslangic)}</b>
@@ -274,6 +300,38 @@ function LotAyrinti({ no, ilkIslem, kapat }: { no: string; ilkIslem?: Panel; kap
   );
 }
 
+// Lotun miktar dengesi: giris = dagilim. Fark varsa kayitlarda hata vardir.
+function DengeKutusu({ lot }: { lot: LotSatiri }) {
+  const d = lot.denge;
+  if (!d) return null;
+  const b = lot.olcuBirimi;
+  const kalemler: [string, number][] = [
+    ["Kesilmemiş top", d.dagilim.kesilmemis],
+    ["Şahit numune", d.dagilim.numune],
+    ["Uygun", d.dagilim.uygun],
+    ["Son kontrol bekleyen", d.dagilim.kaliteBekleyen],
+    ["Karantinadaki parça", d.dagilim.parcaKarantinada],
+    ["Karar bekleyen karantina", d.dagilim.karantinaBekleyen],
+    ["Hurda / fire", d.dagilim.hurda],
+  ];
+  return (
+    <div className={cn("rounded-xl border p-3 text-sm", d.tutuyor ? "border-uygun/30 bg-uygun-acik/40" : "border-unity/40 bg-sorun-acik/50")}>
+      <div className="mb-1 font-semibold text-murekkep">
+        Miktar dengesi: giriş {sayi(d.toplam)} {b}
+        {d.olcumFazlasi > 0 && ` + ölçüm farkı ${sayi(d.olcumFazlasi)} ${b}`} = dağılım {sayi(d.dagilimToplam)} {b}{" "}
+        {d.tutuyor ? "✓" : `— FARK ${sayi(d.fark)} ${b}`}
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-tas-600">
+        {kalemler.filter(([, v]) => v > 0).map(([ad, v]) => (
+          <span key={ad}>
+            {ad}: <b className="sayi">{sayi(v)}</b> {b}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PanelKutusu({ baslik, aciklama, children }: { baslik: string; aciklama?: string; children: React.ReactNode }) {
   return (
     <div className="space-y-4 rounded-xl border-2 border-murekkep/80 bg-white p-4">
@@ -298,7 +356,7 @@ function KesimPaneli({ lot, kars, bitti }: { lot: LotSatiri; kars: Kar[]; bitti:
   useEffect(() => {
     if (boyVarsayilan && !boy) {
       setBoy(String(boyVarsayilan));
-      setAdet(String(Math.floor(lot.topMetraji / boyVarsayilan)));
+      setAdet(String(Math.floor(lot.kesilmemis / boyVarsayilan)));
     }
   }, [boyVarsayilan]);
   const n = (x: string) => Number(String(x).replace(",", "."));
@@ -307,8 +365,13 @@ function KesimPaneli({ lot, kars, bitti }: { lot: LotSatiri; kars: Kar[]; bitti:
     : n(adet) > 0 && n(boy) > 0
       ? Array.from({ length: Math.min(500, Math.floor(n(adet))) }, () => n(boy))
       : [];
-  const toplam = parcalar.reduce((a, x) => a + (x || 0), 0) + (n(fire) || 0);
-  const fark = lot.topMetraji - toplam;
+  // Kesilecek metre = top metraji - sahit numune (backend: kesilmemis)
+  const kesilecek = Number(lot.kesilmemis);
+  const parcaToplam = Math.round(parcalar.reduce((a, x) => a + (x || 0), 0) * 1000) / 1000;
+  const toplam = parcaToplam + (n(fire) || 0);
+  const fark = Math.round((kesilecek - toplam) * 1000) / 1000;
+  const hesapFire = Math.round((kesilecek - parcaToplam) * 1000) / 1000;
+  const tolerans = kesilecek * 0.01;
 
   const m = useMutation({
     mutationFn: () =>
@@ -325,7 +388,7 @@ function KesimPaneli({ lot, kars, bitti }: { lot: LotSatiri; kars: Kar[]; bitti:
       bitti(c.birimler.map((b: any) => b.barkod));
     },
     onError: (e) => {
-      if (e instanceof ApiHatasi && e.durum === 409 && e.kod === "HATA") {
+      if (e instanceof ApiHatasi && e.durum === 409 && !["KESIM_FAZLA", "NUMUNE_YOK", "YANLIS_DURUM", "BLOKE"].includes(e.kod)) {
         toast.error("Metraj ölçümü tolerans dışı: top karantinaya alındı, kesim yapılmadı.");
         bitti();
       } else toast.error(hataMesaji(e, "Kesim yapılamadı."));
@@ -334,7 +397,10 @@ function KesimPaneli({ lot, kars, bitti }: { lot: LotSatiri; kars: Kar[]; bitti:
   const gecersiz = !parcalar.length || parcalar.some((x) => !(x > 0)) || kars.some((k) => !olcum[k.id]);
 
   return (
-    <PanelKutusu baslik="Kesim (metraj)" aciklama={`Top ${sayi(lot.topMetraji)} ${lot.olcuBirimi}. Her parçaya aynı lot altında -01, -02… numaralı etiket basılır.`}>
+    <PanelKutusu
+      baslik="Kesim (metraj)"
+      aciklama={`Top ${sayi(lot.topMetraji)} ${lot.olcuBirimi} − numune ${sayi(lot.numune)} = kesilecek ${sayi(kesilecek)} ${lot.olcuBirimi}. Her parçaya aynı lot altında -01, -02… numaralı etiket basılır.`}
+    >
       {kars.length > 0 && (
         <div className="grid gap-3 sm:grid-cols-3">
           {kars.map((k) => (
@@ -358,9 +424,12 @@ function KesimPaneli({ lot, kars, bitti }: { lot: LotSatiri; kars: Kar[]; bitti:
       <Alan etiket="Ya da parça boylarını tek tek yazın" ipucu="Örnek: 100 100 100 95 (boşluk ya da virgülle)">
         <input className={girdi} value={liste} onChange={(e) => setListe(e.target.value)} />
       </Alan>
-      <div className={cn("rounded-lg px-3 py-2 text-sm", Math.abs(fark) > lot.topMetraji * 0.01 ? "bg-dikkat-acik text-dikkat" : "bg-tas-50 text-tas-600")}>
-        {parcalar.length} parça + fire = <b>{sayi(toplam)}</b> {lot.olcuBirimi} · toptan fark {sayi(fark)} {lot.olcuBirimi}
-        {Math.abs(fark) > lot.topMetraji * 0.01 && " — fark %1'i aşıyor, açıklama zorunlu"}
+      <div className={cn("rounded-lg px-3 py-2 text-sm", Math.abs(fark) > tolerans || hesapFire < -tolerans ? "bg-dikkat-acik text-dikkat" : "bg-tas-50 text-tas-600")}>
+        {parcalar.length} parça = <b>{sayi(parcaToplam)}</b> {lot.olcuBirimi} · kayda geçecek fire = {sayi(kesilecek)} − {sayi(parcaToplam)} ={" "}
+        <b>{sayi(Math.max(hesapFire, 0))}</b> {lot.olcuBirimi}
+        {hesapFire < 0 && hesapFire >= -tolerans && ` · parçalar toptan ${sayi(-hesapFire)} ${lot.olcuBirimi} uzun (ölçüm farkı olarak kaydedilir)`}
+        {hesapFire < -tolerans && " — parçalar topu %1'den fazla aşıyor, kesim yapılamaz"}
+        {hesapFire >= -tolerans && Math.abs(fark) > tolerans && " — bildirilen fire ile hesaplanan fire arasındaki fark %1'i aşıyor, açıklama zorunlu"}
       </div>
       <Alan etiket="Açıklama">
         <input className={girdi} value={aciklama} onChange={(e) => setAciklama(e.target.value)} />
@@ -378,13 +447,16 @@ function NumunePaneli({ lot, bitti }: { lot: LotSatiri; bitti: (e?: string[]) =>
   const m = useMutation({
     mutationFn: () => api<any>(`/lotlar/${lot.no}/numune`, { govde: { arsivYeri: yer || undefined } }),
     onSuccess: (c) => {
-      toast.success(`Şahit numune ${c.numune.barkod} alındı. İmha tarihi: ${c.numune.ek?.imhaTarihi}`);
+      toast.success(`Şahit numune ${c.numune.barkod} alındı. Topta kalan: ${sayi(c.topKalan)} m. İmha tarihi: ${c.numune.ek?.imhaTarihi}`);
       bitti([c.numune.barkod]);
     },
     onError: (e) => toast.error(hataMesaji(e, "Numune alınamadı.")),
   });
   return (
-    <PanelKutusu baslik="Şahit numune" aciklama="Her lottan bir numune alınır ve saklama süresi boyunca arşivlenir. Küçük numune etiketi basılır.">
+    <PanelKutusu
+      baslik="Şahit numune"
+      aciklama="Kesimden önce bu toptan bir numune kesilir, topun metrajından düşülür ve saklama süresi boyunca arşivlenir. Küçük numune etiketi basılır."
+    >
       <Alan etiket="Arşiv yeri">
         <select className={girdi} value={yer} onChange={(e) => setYer(e.target.value)}>
           <option value="">Belirtilmedi</option>

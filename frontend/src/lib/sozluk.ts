@@ -42,6 +42,17 @@ export const DURUM: Record<string, string> = {
   TAMAMLANDI: "Tamamlandı",
   TAMAMLANDI_FARK: "Tamamlandı (fark açıklaması bekliyor)",
   HAZIRLANIYOR: "Hazırlanıyor",
+  // KYS kayitlari
+  ACIK: "Açık",
+  INCELEMEDE: "İncelemede",
+  KAPANDI: "Kapandı",
+  UYGULAMADA: "Uygulamada",
+  DOGRULAMA_BEKLIYOR: "Doğrulama bekliyor",
+  KULLANIMDA: "Kullanımda",
+  KULLANIM_DISI: "Kullanım dışı",
+  ONAYLI: "Onaylı",
+  SARTLI: "Şartlı",
+  ASKIDA: "Askıda",
 };
 export const durumAdi = (d?: string | null) => (d ? DURUM[d] || d : "");
 
@@ -60,6 +71,7 @@ export const OLAY: Record<string, { ad: string; kategori: OlayKategori }> = {
   IS_EMRI_BASLADI: { ad: "Üretim başladı", kategori: "uretim" },
   IS_EMRI_DURUM: { ad: "İş emri durumu değişti", kategori: "uretim" },
   ILK_PARCA: { ad: "İlk parça kontrolü", kategori: "kalite" },
+  PROSES_OLCUM: { ad: "Proses ölçümü", kategori: "kalite" },
   URETIM: { ad: "Üretildi", kategori: "uretim" },
   KARANTINAYA_AYIRMA: { ad: "Karantinaya ayrıldı", kategori: "karantina" },
   KARANTINA_KARARI: { ad: "Karantina kararı", kategori: "karantina" },
@@ -74,6 +86,7 @@ export const OLAY: Record<string, { ad: string; kategori: OlayKategori }> = {
   SIPARISE_AYIRMA: { ad: "Siparişe ayrıldı", kategori: "sevk" },
   SEVKIYAT: { ad: "Müşteriye sevk edildi", kategori: "sevk" },
   MUSTERI_IADESI: { ad: "Müşteri iadesi", kategori: "uyari" },
+  NUMUNE_IMHA: { ad: "Numune imha edildi", kategori: "kalite" },
   DUZELTME: { ad: "Düzeltme kaydı", kategori: "diger" },
   IPTAL: { ad: "Kayıt iptal edildi", kategori: "uyari" },
 };

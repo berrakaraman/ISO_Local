@@ -5,7 +5,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Ban, CheckCircle2, Flag, Pause, Play, Plus, Loader2, ScanBarcode, ShieldAlert, Ruler, XCircle } from "lucide-react";
+import { Activity, AlertTriangle, Ban, CheckCircle2, Flag, Pause, Play, Plus, Loader2, ScanBarcode, ShieldAlert, Ruler, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/iso/PageHeader";
 import { KayitTablosu, type KayitSatiri } from "@/components/iso/KayitTablosu";
@@ -24,6 +24,7 @@ import { api, hataMesaji } from "@/lib/api";
 import { rolVar, useOturum } from "@/lib/oturum";
 import { useKisiler, type OnayDurum } from "@/lib/onay";
 import { durumAdi, sayi, tarihSaat, tr } from "@/lib/sozluk";
+import { useAletler } from "@/lib/kys";
 import { barkodAyikla } from "@/components/izle/BarkodArama";
 import { cn } from "@/lib/utils";
 
@@ -127,7 +128,7 @@ function UretimEmri() {
 function YeniIsEmri({ kapat, acildi }: { kapat: () => void; acildi: (no: string) => void }) {
   const qc = useQueryClient();
   const t = useTanimlar();
-  const kisiler = useKisiler();
+  const kisiler = useKisiler(undefined, "IS_EMRI");
   const [f, setF] = useState({ urunId: "", makineId: "", hedefMiktar: "", planlananTarih: new Date().toISOString().slice(0, 10), musteriId: "", siparisNo: "", aciklama: "", atananId: "" });
   const urun = t.data?.urunler.find((u) => u.id === f.urunId);
   const m = useMutation({
@@ -223,6 +224,7 @@ function YeniIsEmri({ kapat, acildi }: { kapat: () => void; acildi: (no: string)
 // ---------------------------------------------------------------------------------
 type Ayrinti = {
   isEmri: { no: string; durum: string; hedefMiktar: number; urunKod: string; urunAd: string; urunBirimi: string; makineKod: string; baslangic: string | null; bitis: string | null; denge: any };
+  prosesDurumu: { planVar: boolean; aralikDk: number; sonOlcum: string | null; gecenDk: number | null; gecikti: boolean; duzeltmeBekliyor: boolean };
   sayaclar: { uretilen: number; karantina: number; karantinaSayisi: number; topSayisi: number };
   baglamalar: { id: number; barkod: string; lotNo: string; malzemeKod: string; baglamaMiktari: number; guncelMiktar: number; olcuBirimi: string; baglamaZamani: string; cikarmaZamani: string | null; tuketilen: number | null }[];
   toplar: { barkod: string; ilkMiktar: number; durum: string; olusturmaZamani: string }[];
@@ -231,7 +233,7 @@ type Ayrinti = {
   karakteristikler: { id: string; asama: string; ad: string; nominal: number | null; altSinir: number | null; ustSinir: number | null; olcuBirimi: string | null }[];
 };
 
-type Islem = "bagla" | "ilk" | "karantina" | "top" | "duraklat" | "bitir" | "fark" | null;
+type Islem = "bagla" | "ilk" | "proses" | "karantina" | "top" | "duraklat" | "bitir" | "fark" | null;
 
 function IsEmriAyrinti({ no, satir, kapat, iptalEt }: { no: string; satir?: IsEmriSatiri; kapat: () => void; iptalEt?: (no: string) => void }) {
   const oturum = useOturum();
@@ -244,6 +246,9 @@ function IsEmriAyrinti({ no, satir, kapat, iptalEt }: { no: string; satir?: IsEm
   const uretici = rolVar(oturum, "OPERATOR", "SEF");
   const kalite = rolVar(oturum, "KALITE");
   const sef = rolVar(oturum, "SEF");
+  const tanim = useTanimlar();
+  // Ilk parca onayini kalite verir; firma ayarinda izin verildiyse operator de verebilir
+  const ilkParcaYetkili = kalite || (rolVar(oturum, "OPERATOR") && !!(tanim.data as any)?.firma?.ayarlar?.ilkParcaOperatorOnaylayabilir);
   const d = a.data;
   const durum = d?.isEmri.durum || satir?.durum || "";
   const onay = satir ? onayOzeti(satir) : null;
@@ -251,9 +256,14 @@ function IsEmriAyrinti({ no, satir, kapat, iptalEt }: { no: string; satir?: IsEm
 
   const basla = useMutation({
     mutationFn: () => api(`/is-emirleri/${no}/baslat`, { govde: {} }),
-    onSuccess: () => {
-      toast.success(`${no} başlatıldı. Hammaddeleri okutun, ilk parça onayı bekleniyor.`);
-      setIslem("bagla");
+    onSuccess: (c: any) => {
+      if (c?.durum === "URETIMDE") {
+        toast.success(`${no} devam ediyor.`);
+        setIslem(null);
+      } else {
+        toast.success(`${no} başlatıldı. Hammaddeleri okutun; kalite ilk parça onayını verecek.`);
+        setIslem("bagla");
+      }
       yenile();
     },
     onError: (e) => toast.error(hataMesaji(e, "Başlatılamadı.")),
@@ -296,8 +306,9 @@ function IsEmriAyrinti({ no, satir, kapat, iptalEt }: { no: string; satir?: IsEm
             </Button>
           )}
           {calisiyor && dugme("bagla", "Hammadde okut", ScanBarcode, uretici)}
-          {durum === "ILK_PARCA_BEKLIYOR" && dugme("ilk", "İlk parça kontrolü", Ruler, kalite || uretici, true)}
-          {["URETIMDE", "ILK_PARCA_BEKLIYOR"].includes(durum) && dugme("karantina", "Karantinaya ayır", ShieldAlert, rolVar(oturum, "OPERATOR", "SEF", "KALITE"))}
+          {durum === "ILK_PARCA_BEKLIYOR" && dugme("ilk", "İlk parça kontrolü", Ruler, ilkParcaYetkili, true)}
+          {durum === "URETIMDE" && d?.prosesDurumu.planVar && dugme("proses", "Proses ölçümü", Activity, uretici || kalite, !!(d?.prosesDurumu.gecikti || d?.prosesDurumu.duzeltmeBekliyor))}
+          {calisiyor && dugme("karantina", "Karantinaya ayır", ShieldAlert, rolVar(oturum, "OPERATOR", "SEF", "KALITE"))}
           {durum === "URETIMDE" && dugme("top", "Topu bitir", Flag, uretici, true)}
           {["URETIMDE", "ILK_PARCA_BEKLIYOR"].includes(durum) && dugme("duraklat", "Duraklat", Pause, uretici)}
           {["URETIMDE", "DURAKLATILDI"].includes(durum) && dugme("bitir", "İşi bitir", CheckCircle2, uretici)}
@@ -325,8 +336,29 @@ function IsEmriAyrinti({ no, satir, kapat, iptalEt }: { no: string; satir?: IsEm
                 </div>
               )}
 
+              {durum === "ILK_PARCA_BEKLIYOR" && (
+                <div className="rounded-lg border border-dikkat/30 bg-dikkat-acik px-4 py-3 text-sm text-dikkat">
+                  İlk parça onayı bekleniyor. Hammaddeleri okutun; kalite ilk parçayı ölçüp onaylayınca üretim başlar.
+                </div>
+              )}
+              {durum === "URETIMDE" && d.prosesDurumu.duzeltmeBekliyor && (
+                <div className="rounded-lg border border-unity/30 bg-sorun-acik px-4 py-3 text-sm text-unity-koyu">
+                  Son proses ölçümü uygun değildi. Ayarı düzeltip yeni bir proses ölçümü yapın; uygun çıkmadan top bitirilemez.
+                </div>
+              )}
+              {durum === "URETIMDE" && d.prosesDurumu.gecikti && (
+                <div className="rounded-lg border border-unity/30 bg-sorun-acik px-4 py-3 text-sm text-unity-koyu">
+                  Periyodik proses ölçümü gecikti: son uygun ölçüm {sayi(d.prosesDurumu.gecenDk, 0)} dk önce (aralık {d.prosesDurumu.aralikDk} dk). Ölçüm yapılmadan top bitirilemez.
+                </div>
+              )}
+              {durum === "DURAKLATILDI" && (
+                <div className="rounded-lg border border-dikkat/30 bg-dikkat-acik px-4 py-3 text-sm text-dikkat">
+                  İş duraklatıldı. Devam etmek için sağ üstteki <b>Devam et</b>. Arıza ya da bakım olduysa KYS Kayıtları → Bakım / arıza'ya kaydedin.
+                </div>
+              )}
               {islem && (
                 <IslemPaneli
+                  key={islem}
                   islem={islem}
                   no={no}
                   d={d}
@@ -407,15 +439,17 @@ function IsEmriAyrinti({ no, satir, kapat, iptalEt }: { no: string; satir?: IsEm
                 </Bolum>
               </div>
 
-              {d.olcumler.some((o) => o.asama === "ILK_PARCA") && (
-                <Bolum baslik="İlk parça ölçümleri">
+              {d.olcumler.some((o) => o.asama === "ILK_PARCA" || o.asama === "PROSES") && (
+                <Bolum baslik="İlk parça ve proses ölçümleri">
                   <table className="w-full text-sm">
                     <tbody className="divide-y divide-tas-100">
                       {d.olcumler
-                        .filter((o) => o.asama === "ILK_PARCA")
+                        .filter((o) => o.asama === "ILK_PARCA" || o.asama === "PROSES")
                         .map((o) => (
                           <tr key={o.id}>
-                            <td className="py-1.5 text-xs text-tas-400">{o.denemeNo}. deneme</td>
+                            <td className="py-1.5 text-xs text-tas-400">
+                              {o.asama === "PROSES" ? "Proses" : "İlk parça"} {o.denemeNo}. · {tarihSaat(o.zaman)}
+                            </td>
                             <td className="py-1.5">{tr(o.karakteristik)}</td>
                             <td className="sayi py-1.5 text-right">
                               {sayi(o.deger, 3)} {o.olcuBirimi}
@@ -492,10 +526,17 @@ function Denge({ denge }: { denge: any }) {
         </div>
       </div>
       {denge.kalemler?.map((k: any) => (
-        <div key={k.malzeme} className="mt-1 text-xs text-tas-500">
+        <div key={k.malzeme} className={cn("mt-1 text-xs", k.eksik ? "font-semibold text-unity" : "text-tas-500")}>
           {k.malzeme}: {sayi(k.tuketilenKg, 3)} kg tüketildi, {k.gramMetre} g/m → {sayi(k.beklenenMetraj)} m
+          {k.gerekenKg !== undefined && <> · üretilen için gereken {sayi(k.gerekenKg, 3)} kg</>}
+          {k.eksik && " · bu malzeme hiç kullanılmadı!"}
         </div>
       ))}
+      {denge.hedefMiktar !== undefined && (
+        <div className="mt-2 text-sm text-tas-600">
+          Hedef {sayi(denge.hedefMiktar)} m · gerçekleşen {sayi(denge.uretilenToplam)} m (%{sayi(denge.hedefGerceklesmeYuzde)}) · hedef farkı {sayi(denge.hedefFarki)} m
+        </div>
+      )}
       {denge.farkAciklamasi && <div className="mt-2 text-sm text-tas-600">Açıklama: {tr(denge.farkAciklamasi)}</div>}
     </div>
   );
@@ -510,7 +551,9 @@ function IslemPaneli({ islem, no, d, bitti }: { islem: Exclude<Islem, null>; no:
   const [v, setV] = useState<Record<string, string>>({});
   const [ilkSonuc, setIlkSonuc] = useState<any>(null);
   const okutRef = useRef<HTMLInputElement>(null);
-  const kars = d.karakteristikler.filter((k) => k.asama === "ILK_PARCA");
+  const kars = d.karakteristikler.filter((k) => k.asama === (islem === "proses" ? "PROSES" : "ILK_PARCA"));
+  const aletler = useAletler();
+  const gecerliAletler = (aletler.data || []).filter((a) => a.kalibrasyonDurumu === "GECERLI" || a.kalibrasyonDurumu === "YAKLASIYOR");
   const acikBaglamalar = d.baglamalar.filter((g) => !g.cikarmaZamani);
 
   const m = useMutation({
@@ -519,7 +562,10 @@ function IslemPaneli({ islem, no, d, bitti }: { islem: Exclude<Islem, null>; no:
         case "bagla":
           return api(`/is-emirleri/${no}/bagla`, { govde: { barkod: barkodAyikla(v.barkod || "") } });
         case "ilk":
-          return api(`/is-emirleri/${no}/ilk-parca`, { govde: { olcumler: kars.map((k) => ({ karakteristikId: k.id, deger: (v[k.id] || "").replace(",", ".") })) } });
+        case "proses":
+          return api(`/is-emirleri/${no}/${islem === "ilk" ? "ilk-parca" : "proses-olcum"}`, {
+            govde: { olcumler: kars.map((k) => ({ karakteristikId: k.id, deger: (v[k.id] || "").replace(",", ".") })), aletKod: v.aletKod || undefined },
+          });
         case "karantina":
           return api(`/is-emirleri/${no}/karantina`, { govde: { hataKodu: v.hataKodu, miktar: (v.miktar || "").replace(",", "."), not: v.not || undefined } });
         case "top":
@@ -545,6 +591,16 @@ function IslemPaneli({ islem, no, d, bitti }: { islem: Exclude<Islem, null>; no:
         setIlkSonuc(c);
         if (c.onaylandi) toast.success("İlk parça onaylandı. Üretim başladı.");
         else toast.error("İlk parça uygun değil. Ayarı düzeltip tekrar ölçün.");
+        return bitti();
+      }
+      if (islem === "proses") {
+        setIlkSonuc(c);
+        if (c.uygun) toast.success("Proses ölçümü uygun. Üretim devam ediyor.");
+        else toast.error("Tolerans dışı! İş emri durduruldu. Şüpheli üretimi karantinaya ayırın, ayarı düzeltip yeniden başlatın.");
+        return bitti();
+      }
+      if (islem === "duraklat") {
+        toast.success("İş duraklatıldı.");
         return bitti();
       }
       if (islem === "karantina") {
@@ -612,10 +668,21 @@ function IslemPaneli({ islem, no, d, bitti }: { islem: Exclude<Islem, null>; no:
         </>
       )}
 
-      {islem === "ilk" && (
+      {(islem === "ilk" || islem === "proses") && (
         <>
-          <div className="font-display text-lg font-bold text-murekkep">İlk parça kontrolü</div>
-          {!kars.length && <p className="text-sm text-unity">Bu ürün için kontrol planında ilk parça maddesi yok. Tanımlar → Kontrol planı.</p>}
+          <div className="font-display text-lg font-bold text-murekkep">{islem === "ilk" ? "İlk parça kontrolü" : "Periyodik proses ölçümü"}</div>
+          {islem === "proses" && <p className="text-sm text-tas-500">Bir değer bile tolerans dışıysa iş emri otomatik durur. Ayarı düzeltip Devam et deyin; top bitirmeden önce uygun bir proses ölçümü gerekir.</p>}
+          {!kars.length && <p className="text-sm text-unity">Bu ürün için kontrol planında {islem === "ilk" ? "ilk parça" : "proses"} maddesi yok. Tanımlar → Kontrol planı.</p>}
+          <Alan etiket="Ölçüm aleti" ipucu="Yalnızca kalibrasyonu geçerli aletler listelenir">
+            <select className={girdi} value={v.aletKod || ""} onChange={(e) => setV({ ...v, aletKod: e.target.value })}>
+              <option value="">Seçilmedi</option>
+              {gecerliAletler.map((a) => (
+                <option key={a.kod} value={a.kod}>
+                  {a.kod} — {tr(a.ad)} (kal. {a.sonrakiKalibrasyon})
+                </option>
+              ))}
+            </select>
+          </Alan>
           <div className="grid gap-3 sm:grid-cols-2">
             {kars.map((k, i) => (
               <Alan key={k.id} etiket={`${tr(k.ad)} (${k.altSinir ?? "–"} … ${k.ustSinir ?? "–"} ${k.olcuBirimi || ""})`}>
@@ -624,8 +691,8 @@ function IslemPaneli({ islem, no, d, bitti }: { islem: Exclude<Islem, null>; no:
             ))}
           </div>
           {ilkSonuc && (
-            <div className={cn("rounded-lg px-3 py-2 text-sm", ilkSonuc.onaylandi ? "bg-uygun-acik text-uygun" : "bg-sorun-acik text-unity-koyu")}>
-              {ilkSonuc.deneme}. deneme: {ilkSonuc.onaylandi ? "uygun, üretim başladı" : "uygun değil"} —{" "}
+            <div className={cn("rounded-lg px-3 py-2 text-sm", (ilkSonuc.onaylandi ?? ilkSonuc.uygun) ? "bg-uygun-acik text-uygun" : "bg-sorun-acik text-unity-koyu")}>
+              {ilkSonuc.deneme}. ölçüm: {(ilkSonuc.onaylandi ?? ilkSonuc.uygun) ? (islem === "ilk" ? "uygun, üretim başladı" : "uygun") : islem === "ilk" ? "uygun değil" : "tolerans dışı, iş emri durdu"} —{" "}
               {ilkSonuc.sonuclar.map((s: any) => `${s.karakteristik} ${s.deger}${s.uygun ? " ✓" : " ✗"}`).join(", ")}
             </div>
           )}
@@ -674,8 +741,9 @@ function IslemPaneli({ islem, no, d, bitti }: { islem: Exclude<Islem, null>; no:
       {islem === "duraklat" && (
         <>
           <div className="font-display text-lg font-bold text-murekkep">Duraklat</div>
-          <Alan etiket="Gerekçe (isteğe bağlı)">
-            <input className={girdi} autoFocus value={v.gerekce || ""} onChange={(e) => setV({ ...v, gerekce: e.target.value })} placeholder="Arıza, mola, ayar…" />
+          <p className="text-sm text-tas-500">İş durur; Devam et ile kaldığı yerden sürer (ilk parça yeniden istenmez). Arıza ya da bakım olduysa KYS Kayıtları → Bakım / arıza'ya kaydedin.</p>
+          <Alan etiket="Açıklama (isteğe bağlı)">
+            <input className={girdi} autoFocus value={v.gerekce || ""} onChange={(e) => setV({ ...v, gerekce: e.target.value })} placeholder="Mola, malzeme bekleniyor, arıza…" />
           </Alan>
           {kaydetDugmesi("Duraklat")}
         </>
