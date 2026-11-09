@@ -61,7 +61,7 @@ npm run db:reset     # veritabanını sıfırlar ve örnek veriyi yeniden yükle
 npm run test:akis
 ```
 
-Ekranın sonunda `Sonuc: 405 basarili, 0 basarisiz` görmelisin. Bu test, mal kabulden sevkiyata kadar bütün akışı, engellenmesi gereken durumları (onaysız malzeme, onaylanmamış iş emri/sevkiyat, kendi kaydını onaylama, geciken ya da uygun olmayan proses ölçümü, kalibrasyonu geçmiş alet, numunesiz kesim, bloke parça, DÖF kapanmadan şikâyet kapatma vb.) ve **hesapları** (lot dengesi, iş emri malzeme dengesi, hammadde bakiye kartı, makine kullanılabilirliği, tedarikçi puanı, KPI pay/payda) sayı sayı dener.
+Ekranın sonunda `Sonuc: 408 basarili, 0 basarisiz` görmelisin. Bu test, mal kabulden sevkiyata kadar bütün akışı, engellenmesi gereken durumları (onaysız malzeme, onaylanmamış iş emri/sevkiyat, kendi kaydını onaylama, geciken ya da uygun olmayan proses ölçümü, kalibrasyonu geçmiş alet, numunesiz kesim, bloke parça, DÖF kapanmadan şikâyet kapatma vb.) ve **hesapları** (lot dengesi, iş emri malzeme dengesi, hammadde bakiye kartı, makine kullanılabilirliği, tedarikçi puanı, KPI pay/payda) sayı sayı dener.
 
 Test, zamanın geçmesini taklit etmek için (proses ölçüm aralığı, numune saklama süresi) birkaç kaydın zamanını doğrudan veritabanında geriye alır; bu yüzden yalnızca yerel/test veritabanında çalıştırın.
 

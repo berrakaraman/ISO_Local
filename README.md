@@ -13,9 +13,11 @@ docker compose up -d                 # PostgreSQL
 cd backend && npm install && cp .env.example .env   # .env içinde JWT_SECRET'i değiştirin
 npm run db:reset && npm run dev      # şema + örnek veri, API :5001
 # ikinci terminal
-cd backend && npm run test:akis      # 405 kontrol: akış, engeller ve hesaplar
+cd backend && npm run test:akis      # 408 kontrol: akış, engeller ve hesaplar
 cd frontend && npm install && npm run dev
 ```
+
+Sunucuya kurulum (Docker, HTTPS, gece yedeği): [sunucu/SUNUCU_KURULUM.md](sunucu/SUNUCU_KURULUM.md)
 
 ## Ekranlar
 

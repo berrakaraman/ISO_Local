@@ -24,3 +24,6 @@ Thumbs.db
 
 # Veritabani yedekleri (git'e girmez; harici diske de kopyalayin)
 backend/yedekler/
+
+# Sunucu: yedekler ve gizli ayarlar
+sunucu/yedekler/

@@ -1,0 +1,106 @@
+# ISO KYS - sunucu kurulumu. Bu klasorde calistirin:  docker compose up -d --build
+# Ayarlar ayni klasordeki .env dosyasindan okunur (ornek: .env.example).
+# Butun konteynerler "iso-kys-" ile baslar ve kendi agindadir; sunucudaki diger projelere dokunmaz.
+# Disariya yalnizca web (80/443) acilir. Veritabani ve API sadece bu projenin ic aginda.
+name: iso-kys
+
+x-log: &log
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" } # konteyner basina en fazla 30 MB log
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: iso
+      POSTGRES_PASSWORD: ${DB_SIFRE:?.env icinde DB_SIFRE tanimli degil}
+      POSTGRES_DB: iso_db
+      TZ: Europe/Istanbul
+      PGTZ: Europe/Istanbul
+    # Kucuk bellek ayari: 512 MB sinirin icinde rahat calisir
+    command: >
+      postgres -c shared_buffers=128MB -c effective_cache_size=256MB -c work_mem=4MB
+               -c maintenance_work_mem=32MB -c max_connections=40 -c timezone=Europe/Istanbul
+    volumes:
+      - db-veri:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iso -d iso_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 512m
+    memswap_limit: 512m
+    <<: *log
+
+  api:
+    build: ../backend
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      NODE_ENV: production
+      PORT: 5001
+      DATABASE_URL: postgres://iso:${DB_SIFRE}@db:5432/iso_db
+      JWT_SECRET: ${JWT_SECRET:?.env icinde JWT_SECRET tanimli degil}
+      JWT_SURE: ${JWT_SURE:-12h}
+      CORS_ORIGIN: https://${SUNUCU_ADRESI}
+      ETIKET_URL: https://${SUNUCU_ADRESI}/b
+      TRUST_PROXY: "1"
+      SEED_FIRMA_KODU: ${SEED_FIRMA_KODU:-ORNEK}
+      SEED_FIRMA_UNVANI: ${SEED_FIRMA_UNVANI:-}
+      TZ: Europe/Istanbul
+      NODE_OPTIONS: --max-old-space-size=256
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5001/api/saglik >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    mem_limit: 384m
+    memswap_limit: 384m
+    <<: *log
+
+  web:
+    build: ../frontend
+    restart: unless-stopped
+    depends_on: [api]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      SUNUCU_ADRESI: ${SUNUCU_ADRESI:?.env icinde SUNUCU_ADRESI tanimli degil}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-veri:/data     # sertifikalar burada; silinirse yeniden alinir
+      - caddy-ayar:/config
+    mem_limit: 128m
+    memswap_limit: 128m
+    <<: *log
+
+  # Her gece 03:00'ten sonra veritabani yedegi: ./yedekler/iso_YYYYAAGG.dump, son 30 gun tutulur.
+  # Yedek alindiktan sonra okunabilirligi pg_restore --list ile denetlenir; bozuk yedek saklanmaz.
+  yedek:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      PGHOST: db
+      PGUSER: iso
+      PGPASSWORD: ${DB_SIFRE}
+      PGDATABASE: iso_db
+      TZ: Europe/Istanbul
+    volumes:
+      - ./yedekler:/yedekler
+      - ./yedekle.sh:/yedekle.sh:ro
+    entrypoint: ["sh", "/yedekle.sh"]
+    mem_limit: 128m
+    memswap_limit: 128m
+    <<: *log
+
+volumes:
+  db-veri:
+  caddy-veri:
+  caddy-ayar:

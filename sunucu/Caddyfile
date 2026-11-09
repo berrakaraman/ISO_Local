@@ -1,0 +1,39 @@
+# Web sunucusu (Caddy).
+# SUNUCU_ADRESI .env'den gelir: simdilik sunucunun IP'si, ileride alan adi (kys.firma.com).
+# Sertifika Let's Encrypt'ten ucretsiz alinir ve kendiliginden yenilenir. IP adresine sertifika yalnizca
+# "shortlived" (6 gunluk) profille verilir; Caddy bunu birkac gunde bir otomatik yeniler.
+# Port 80 sertifika dogrulamasi ve http -> https yonlendirmesi icin acik olmalidir.
+{$SUNUCU_ADRESI} {
+	tls {
+		issuer acme {
+			profile shortlived
+		}
+	}
+
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+
+	# API istekleri backend'e
+	handle /api/* {
+		reverse_proxy api:5001
+	}
+
+	# Ekranlar: bilinmeyen adresler index.html'e (sayfa yonlendirmesini uygulama yapar)
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

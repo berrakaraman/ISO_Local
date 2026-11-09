@@ -1,10 +1,28 @@
-// Ornek veri (yalnizca yerel gelistirme ve demo icin).
+// Ornek veri (yerel gelistirme ve demo icin).
 //   npm run db:seed
 // Isimler ve kodlar ORNEKTIR; gercek degerler Tanimlar ekranindan girilir.
+// Sunucuda (NODE_ENV=production) ornek hesaplarin sifreleri ve PIN'leri RASTGELE uretilir ve yalnizca
+// bir kez ekrana yazilir: internete acik sistemde herkesin bildigi "Berra.1234" gibi sifreler olmaz.
+// Firma kodu ve unvani .env'den degistirilebilir: SEED_FIRMA_KODU, SEED_FIRMA_UNVANI.
+const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const { pool, tx } = require("../config/db");
 
-const FIRMA_KOD = "ORNEK";
+const FIRMA_KOD = process.env.SEED_FIRMA_KODU || "ORNEK";
+const FIRMA_UNVAN = process.env.SEED_FIRMA_UNVANI || "UNELSİS Kablo ve Spiral Sistemleri";
+const URETIM = process.env.NODE_ENV === "production";
+
+// Karistirilmayan harf ve rakamlarla okunakli sifre: ornek "Kx7m-P2qr-9Zat"
+function rastgeleSifre() {
+  const A = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  for (;;) {
+    const b = crypto.randomBytes(12);
+    const h = [...b].map((x) => A[x % A.length]).join("");
+    const s = `${h.slice(0, 4)}-${h.slice(4, 8)}-${h.slice(8, 12)}`;
+    if (/[a-z]/.test(s) && /[A-Z]/.test(s) && /\d/.test(s)) return s;
+  }
+}
+const rastgelePin = () => String(crypto.randomInt(0, 10000)).padStart(4, "0");
 
 // Ornek kisiler. Herkes kullanici adi + sifre ile girer (frontend giris ekranindaki
 // "Gelistirme hesaplari" dugmeleri bu listeyle aynidir).
@@ -24,13 +42,19 @@ async function main() {
       console.log(`'${FIRMA_KOD}' firmasi zaten var, seed atlandi. Sifirlamak icin: npm run db:reset`);
       return;
     }
+    if (URETIM) {
+      for (const k of KULLANICILAR) {
+        if (k.sifre) k.sifre = rastgeleSifre();
+        if (k.pin) k.pin = rastgelePin();
+      }
+    }
 
     const firma = (
       await c.query(
         `INSERT INTO firma (kod, unvan, ayarlar) VALUES ($1, $2, $3) RETURNING id`,
         [
           FIRMA_KOD,
-          "UNELSİS Kablo ve Spiral Sistemleri",
+          FIRMA_UNVAN,
           {
             dengeToleransiYuzde: 3, // is emri miktar dengesi (bolum 11)
             kesimToleransiYuzde: 1, // kesim toplam kontrolu (bolum 8.3)
@@ -162,7 +186,9 @@ async function main() {
       );
     }
 
-    console.log("Seed tamamlandi. Ornek hesaplar:");
+    console.log(URETIM
+      ? "Seed tamamlandi. Hesaplar (sifreler RASTGELE uretildi, simdi bir yere kaydedin; bir daha gosterilmez):"
+      : "Seed tamamlandi. Ornek hesaplar:");
     for (const k of KULLANICILAR) {
       console.log(
         `  ${(k.kullaniciAdi || "(kiosk)").padEnd(9)} ${k.sifre ? `sifre: ${k.sifre}`.padEnd(22) : "".padEnd(22)}` +

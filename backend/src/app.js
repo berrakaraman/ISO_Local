@@ -8,6 +8,9 @@ const { bulunamadi, hataYakala } = require("./middleware/hata");
 
 const app = express();
 app.disable("x-powered-by");
+// Sunucuda istekler onundeki web sunucusundan (Caddy) gelir; gercek istemci IP'si X-Forwarded-For'dadir.
+// Giris deneme siniri bu IP ile calisir. Yerelde TRUST_PROXY tanimli degildir.
+if (process.env.TRUST_PROXY) app.set("trust proxy", Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY);
 app.use(express.json({ limit: "1mb" }));
 app.use(cors({ origin: env.corsOrigin }));
 app.use(require("./lib/deve").deveMiddleware); // cevaplar camelCase

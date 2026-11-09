@@ -656,6 +656,17 @@ async function main() {
   const ozet = await ok("Panel ozeti", sef, "GET", "/panel/ozet");
   esit("Bugun uretilen (tum toplar)", ozet.bugunUretilen, bugunUretilen);
 
+  console.log("\n23) Oturum gecerliligi (veritabani sifirlanirsa / kullanici pasife alinirsa)");
+  await sql("UPDATE kullanici SET aktif = false WHERE kullanici_adi = 'denetci'");
+  await engel("Pasife alinan kullanicinin eski oturumu", "OTURUM_YOK", denetci, "GET", "/panel/ozet");
+  await sql("UPDATE kullanici SET aktif = true WHERE kullanici_adi = 'denetci'");
+  await ok("Yeniden aktif edilince ayni oturum calisir", denetci, "GET", "/panel/ozet");
+  const jwt = require("jsonwebtoken");
+  const env = require("../src/config/env");
+  const firmaId = (await sql("SELECT firma_id FROM kullanici WHERE kullanici_adi = 'denetci'"))[0].firma_id;
+  const hayalet = jwt.sign({ sub: "00000000-0000-0000-0000-000000000000", firmaId, roller: ["ADMIN"] }, env.jwtSecret, { expiresIn: "5m" });
+  await engel("Veritabaninda olmayan kullanicinin oturumu (db:reset sonrasi eski token)", "OTURUM_YOK", hayalet, "GET", "/panel/kpi");
+
   console.log(`\nSonuc: ${gecen} basarili, ${kalan} basarisiz\n`);
   await db.end();
   process.exit(kalan ? 1 : 0);
