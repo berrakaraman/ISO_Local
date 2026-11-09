@@ -15,6 +15,28 @@ Her konteynerin logu en fazla 30 MB tutulur, disk dolmaz.
 
 > Sunucuda **asla** `npm run db:reset` ya da `docker compose down -v` çalıştırma. İkisi de bütün veriyi siler (`db:reset` sunucuda zaten kodla engelli).
 
+## Kısa yol: tek komut
+
+Kod `/opt/iso-kys` klasörüne indirildikten sonra (D adımı) kurulum da güncelleme de tek komuttur:
+
+```
+bash /opt/iso-kys/sunucu/kur.sh
+```
+
+Hangi klasörde olduğun önemli değildir. Betik sırayla şunları yapar:
+1. Swap yoksa ekler (C).
+2. Kodu GitHub'dan çeker.
+3. `.env` yoksa rastgele şifrelerle oluşturur, sunucunun IP'sini yazar (E).
+4. Konteynerleri derleyip başlatır (F).
+5. API hazır olana kadar bekler.
+6. Örnek veri yoksa yükler (G). Rastgele şifreler hem ekrana hem `sunucu/ilk-sifreler.txt` dosyasına yazılır; dosyayı yalnızca root okuyabilir.
+
+Tekrar çalıştırmak güvenlidir: var olan swap'a, `.env`'e ve veriye dokunmaz.
+
+> Proje kökündeki `docker-compose.yml` yalnızca yerel bilgisayar içindir. Sunucuda `/opt/iso-kys` içinde `docker compose` çalıştırma.
+
+Aşağıdaki bölümler betiğin yaptığını adım adım anlatır.
+
 ---
 
 ## A. Bilgisayarında (bir kez)
@@ -130,12 +152,13 @@ Sunucuda örnek hesapların şifreleri **rastgele üretilir** ve **yalnızca bu 
 
 | Ne | Komut (`/opt/iso-kys/sunucu` içinde) |
 | --- | --- |
-| Yeni sürümü kur | `git -C /opt/iso-kys pull && docker compose up -d --build` |
+| Yeni sürümü kur | `bash /opt/iso-kys/sunucu/kur.sh` |
 | Durum | `docker compose ps` |
 | Backend logu | `docker compose logs --tail 100 api` |
 | Yeniden başlat | `docker compose restart` |
 | Durdur (veri kalır) | `docker compose down` |
 | Yedekleri gör | `ls -lh yedekler` |
+| İlk şifreleri tekrar gör | `cat ilk-sifreler.txt` |
 | Hemen yedek al | `docker compose exec yedek sh -c 'pg_dump -Fc -f /yedekler/elle_$(date +%Y%m%d_%H%M).dump'` |
 | Yedeği Mac'e indir (Mac'te çalıştır) | `scp root@SUNUCU-IP:/opt/iso-kys/sunucu/yedekler/iso_*.dump ~/Projeler/` |
 

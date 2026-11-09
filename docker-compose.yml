@@ -1,3 +1,5 @@
+# !!! SUNUCUDA KULLANMAYIN. Bu dosya yalnizca kendi bilgisayarinizda (yerel gelistirme) veritabani icindir.
+#     Sunucu kurulumu: sunucu/kur.sh  (ayrinti: sunucu/SUNUCU_KURULUM.md)
 # Yerelde veritabanini calistirir:  docker compose up -d
 # TimescaleDB, PostgreSQL'in eklentili halidir (makine zaman serisi icin, 5. faz).
 services:

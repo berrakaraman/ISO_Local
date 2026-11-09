@@ -27,3 +27,4 @@ backend/yedekler/
 
 # Sunucu: yedekler ve gizli ayarlar
 sunucu/yedekler/
+sunucu/ilk-sifreler.txt
