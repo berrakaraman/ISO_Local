@@ -7,7 +7,7 @@ const { ROLLER, BIRIM_DURUM: D, OLAY } = require("../lib/sabitler");
 const { rol } = require("../middleware/auth");
 const { yeniNumara } = require("../services/numara");
 const { olayYaz, birimDurumu, izYaz } = require("../services/iz");
-const { onayOlustur, onayKontrol, onaySifirla } = require("../services/onay");
+const { onayOlustur, onayKontrol, onaySifirla, onayEsitle } = require("../services/onay");
 const { yuvarla } = require("../lib/miktar");
 const { birimBul, birimGuncelle, blokeKontrol, firmaAyarlari } = require("../services/birim");
 
@@ -247,6 +247,8 @@ router.post(
       }
       await c.query("UPDATE sevkiyat SET durum = 'IPTAL', iptal_eden = $1, iptal_zamani = now(), iptal_gerekcesi = $2 WHERE id = $3", [req.ctx.kullaniciId, gerekce, s.id]);
       await izYaz(c, req.ctx, { tablo: "sevkiyat", kayitId: s.id, islem: "IPTAL", degisiklikler: [{ alan: "durum", eski: s.durum, yeni: "IPTAL" }], gerekce });
+      // Bekleyen onay kapanir (iptal edilen sevkiyat kimsenin onay kutusunda kalmasin)
+      await onayEsitle(c, req.ctx, "SEVKIYAT", s.no, "REDDEDILDI", `Kayit iptal edildi: ${gerekce}`);
       return { no: s.no, durum: "IPTAL", serbestBirakilan: liste.length };
     });
     res.json(sonuc);

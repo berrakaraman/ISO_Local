@@ -28,3 +28,4 @@ backend/yedekler/
 # Sunucu: yedekler ve gizli ayarlar
 sunucu/yedekler/
 sunucu/ilk-sifreler.txt
+sunucu/demo-sifirla_*.log

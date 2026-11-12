@@ -2,7 +2,7 @@
 // Akis diyagrami (soy agaci) + zaman cizelgesi + miktar dengesi + etiket (barkod ve QR).
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowLeft,
@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils";
 import { BIRIM_TIPI, durumAdi, olayAdi, sayi, tarihSaat, tr, type Renk } from "@/lib/sozluk";
 import { AkisDiyagrami, type Bag, type Dugum } from "@/components/izle/AkisDiyagrami";
 import { ZamanCizelgesi, type Olay } from "@/components/izle/ZamanCizelgesi";
-import { HammaddeBakiye, UretimLotuDokumu } from "@/components/izle/MiktarDengesi";
+import { HammaddePartisi, HikayeOzeti, UretimLotuOzeti } from "@/components/izle/MiktarDengesi";
 import { BarkodArama } from "@/components/izle/BarkodArama";
 import { EtiketOnizleme } from "@/components/barkod/Etiket";
 import { Seritler } from "@/components/marka/Marka";
@@ -77,6 +77,13 @@ function UrunHikayesi() {
     enabled: agac.isSuccess,
   });
 
+  // Duz cumleli ozet ve miktar dokumu: tek hesap (backend services/hikaye.js)
+  const ozet = useQuery({
+    queryKey: ["ozet", barkod],
+    queryFn: () => api<any>(`/izlenebilirlik/${encodeURIComponent(barkod)}/ozet`),
+    enabled: agac.isSuccess,
+  });
+
   const dugumler = agac.data?.dugumler || [];
   const baglar = agac.data?.baglar || [];
   const olayListe = olaylar.data?.olaylar || [];
@@ -88,8 +95,8 @@ function UrunHikayesi() {
     else nav({ to: "/izle/$barkod", params: { barkod: b } });
   };
 
-  const rmLotlar = useMemo(() => [...new Set(dugumler.filter((d) => d.tur === "RM" && d.lotNo).map((d) => d.lotNo!))], [dugumler]);
-  const fgLotlar = useMemo(() => dugumler.filter((d) => d.tur === "FG_LOT"), [dugumler]);
+  const uretimLotlari: any[] = ozet.data?.uretimLotlari || [];
+  const hammaddeLotlari: any[] = ozet.data?.hammaddeLotlari || [];
 
   if (agac.isLoading) {
     return (
@@ -161,7 +168,7 @@ function UrunHikayesi() {
           {b && (
             <dl className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm sm:grid-cols-4">
               <Bilgi ikon={Scale} ad="Miktar" deger={`${sayi(b.miktar)} / ${sayi(b.ilkMiktar)} ${b.olcuBirimi}`} alt="kalan / ilk" />
-              <Bilgi ikon={MapPin} ad="Şu an nerede" deger={yerAdi(b.yer)} />
+              <Bilgi ikon={MapPin} ad="Şu an" deger={ozet.data?.odak?.simdi || yerAdi(b.yer)} />
               <Bilgi ikon={Tag} ad="Lot" deger={b.lotNo || "—"} mono />
               <Bilgi ikon={User} ad="Oluşturan" deger={tr(b.olusturanAd) || "—"} alt={tarihSaat(b.olusturmaZamani)} />
             </dl>
@@ -191,6 +198,12 @@ function UrunHikayesi() {
       </header>
 
       <div className="p-8">
+        {sekme !== "etiket" && ozet.data && (
+          <div className="mb-6 max-w-6xl">
+            <HikayeOzeti ozet={ozet.data} onBarkod={barkodaGit} />
+          </div>
+        )}
+
         {sekme === "akis" && (
           <div className="space-y-3">
             <p className="text-sm text-tas-500">
@@ -210,13 +223,17 @@ function UrunHikayesi() {
 
         {sekme === "denge" && (
           <div className="max-w-6xl space-y-6">
-            {fgLotlar.map((l) => (
-              <UretimLotuDokumu key={l.id} lot={l} dugumler={dugumler} baglar={baglar} olaylar={olayListe} onBarkod={barkodaGit} />
+            {ozet.isLoading && <Loader2 className="mx-auto my-8 h-6 w-6 animate-spin text-tas-400" />}
+            {ozet.isError && <p className="text-sm text-unity">{hataMesaji(ozet.error, "Miktar dengesi yüklenemedi.")}</p>}
+            {uretimLotlari.map((u) => (
+              <UretimLotuOzeti key={u.lotNo} u={u} onBarkod={barkodaGit} />
             ))}
-            {rmLotlar.map((l) => (
-              <HammaddeBakiye key={l} lotNo={l} onBarkod={barkodaGit} />
+            {hammaddeLotlari.map((h) => (
+              <HammaddePartisi key={h.lotNo} h={h} kaynakOlarak={uretimLotlari.length > 0} onBarkod={barkodaGit} />
             ))}
-            {!fgLotlar.length && !rmLotlar.length && <p className="text-sm text-tas-400">Bu kayıt için miktar dengesi yok.</p>}
+            {ozet.isSuccess && !uretimLotlari.length && !hammaddeLotlari.length && (
+              <p className="text-sm text-tas-400">Bu kayıt için miktar dengesi yok.</p>
+            )}
           </div>
         )}
 

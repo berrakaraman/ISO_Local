@@ -3,6 +3,10 @@
 # Sertifika Let's Encrypt'ten ucretsiz alinir ve kendiliginden yenilenir. IP adresine sertifika yalnizca
 # "shortlived" (6 gunluk) profille verilir; Caddy bunu birkac gunde bir otomatik yeniler.
 # Port 80 sertifika dogrulamasi ve http -> https yonlendirmesi icin acik olmalidir.
+{
+	default_sni {$SUNUCU_ADRESI}
+}
+
 {$SUNUCU_ADRESI} {
 	tls {
 		issuer acme {

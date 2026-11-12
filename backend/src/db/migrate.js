@@ -78,7 +78,11 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error("\n[MIGRATION HATASI]", err.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error("\n[MIGRATION HATASI]", err.message);
+    process.exit(1);
+  });
+}
+
+module.exports = { sifirlaSema };

@@ -270,8 +270,28 @@ const Kutu = forwardRef<
   { d: Dugum; soluk: boolean; secili: boolean; onClick: () => void; onEnter: () => void }
 >(function Kutu({ d, soluk, secili, onClick, onEnter }, ref) {
   const Ikon = TUR_IKON[d.tur] || Package;
-  const miktar = d.tur === "IS_EMRI" || d.tur === "SEVKIYAT" ? null : `${sayi(d.ilkMiktar)} ${d.olcuBirimi}`;
+  // Hammadde kutusunda ilk miktar degil, bu agactaki is emrine giden miktar yazar (25 kg bobinden 7 kg kullanildiysa "7 kg")
+  const miktar =
+    d.tur === "IS_EMRI" || d.tur === "SEVKIYAT"
+      ? null
+      : d.tur === "RM" && d.buIseGiden != null
+        ? `${sayi(d.buIseGiden)} ${d.olcuBirimi}`
+        : d.tur === "RM" && d.sadeceKaynak
+          ? null
+          : `${sayi(d.ilkMiktar)} ${d.olcuBirimi}`;
+  const miktarAlt =
+    d.tur === "RM" && d.buIseGiden != null
+      ? d.kullanim?.some((x: any) => x.aktif)
+        ? "makinede"
+        : `bu işe giden · ${sayi(d.ilkMiktar)} ${d.olcuBirimi} bobinden`
+      : null;
   const alt = d.tur === "IS_EMRI" ? tr(d.operatorler || d.altBaslik) : tr(d.altBaslik);
+  const durumYazisi =
+    d.tur === "SEVKIYAT"
+      ? tr(d.musteri)
+      : d.tur === "RM" && d.sadeceKaynak
+        ? "Bu işe takılmadı; bir kısmı ayrılıp kullanıldı"
+        : d.simdi || (d.durum ? durumAdi(d.durum) : alt);
   return (
     <button
       ref={ref}
@@ -284,6 +304,7 @@ const Kutu = forwardRef<
         secili ? "border-murekkep shadow-md" : "border-tas-200 hover:border-tas-400 hover:shadow-sm",
         d.baslangic && "ring-2 ring-unity ring-offset-2",
         soluk && "opacity-30",
+        !soluk && d.sadeceKaynak && "opacity-60",
       )}
     >
       <span className={cn("w-1.5 shrink-0", RENK_SERIT[d.renk] || "bg-tas-300")} />
@@ -293,11 +314,21 @@ const Kutu = forwardRef<
           <span className="block truncate font-mono text-[12px] font-semibold text-murekkep">
             {d.baslik}
           </span>
-          <span className="block truncate text-[11px] text-tas-500">
-            {d.tur === "SEVKIYAT" ? tr(d.musteri) : d.durum ? durumAdi(d.durum) : alt}
+          <span className="block truncate text-[11px] text-tas-500" title={durumYazisi}>
+            {durumYazisi}
           </span>
+          {d.yolculuk && ["FG", "KR"].includes(d.tur) && (
+            <span className="mt-0.5 block truncate text-[10px] text-tas-400" title={d.yolculuk}>
+              {d.yolculuk}
+            </span>
+          )}
         </span>
-        {miktar && <span className="sayi shrink-0 text-[11px] font-semibold text-tas-600">{miktar}</span>}
+        {miktar && (
+          <span className="shrink-0 text-right">
+            <span className="sayi block text-[11px] font-semibold text-tas-600">{miktar}</span>
+            {miktarAlt && <span className="block text-[9px] text-tas-400">{miktarAlt}</span>}
+          </span>
+        )}
       </span>
       {d.bloke && <span className="absolute right-1 top-1 rounded bg-dikkat px-1 text-[9px] font-bold text-white">BLOKE</span>}
     </button>

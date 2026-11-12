@@ -26,6 +26,7 @@ const LOT_SECIM = `
          COALESCE(f.uygun, 0) AS uygun, COALESCE(f.sevk_edilen, 0) AS sevk_edilen,
          COALESCE(f.kalite_bekleyen, 0) AS kalite_bekleyen, COALESCE(f.fg_karantina, 0) AS fg_karantina,
          COALESCE(f.parca_sayisi, 0) AS parca_sayisi, COALESCE(f.bloke_parca, 0) AS bloke_parca,
+         COALESCE(f.bloke_miktar, 0) AS bloke_miktar, COALESCE(f.stokta, 0) AS stokta, COALESCE(f.sevke_ayrilan, 0) AS sevke_ayrilan,
          COALESCE(k.karantina, 0) AS karantina, COALESCE(k.karantina_bekleyen, 0) AS karantina_bekleyen,
          COALESCE(k.karantina_olumlu, 0) AS karantina_olumlu,
          COALESCE(h.kesim_firesi, 0) AS kesim_firesi, COALESCE(h.top_hurda, 0) AS top_hurda,
@@ -45,7 +46,11 @@ const LOT_SECIM = `
              sum(b.miktar) FILTER (WHERE b.durum = 'KALITE_BEKLIYOR') AS kalite_bekleyen,
              sum(b.miktar) FILTER (WHERE b.durum = 'KARANTINA') AS fg_karantina,
              count(*) FILTER (WHERE b.durum NOT IN ('BOLUNDU','RET','HURDA')) AS parca_sayisi,
-             count(*) FILTER (WHERE b.bloke AND b.durum NOT IN ('BOLUNDU','RET','HURDA')) AS bloke_parca
+             count(*) FILTER (WHERE b.bloke AND b.durum NOT IN ('BOLUNDU','RET','HURDA')) AS bloke_parca,
+             -- Depoda duran uygun parcalar: bloke olanlar ayri sayilir (sevk edilemezler)
+             sum(b.miktar) FILTER (WHERE b.bloke AND b.durum IN ('SERBEST','DEPODA','SIPARISE_AYRILDI')) AS bloke_miktar,
+             sum(b.miktar) FILTER (WHERE NOT b.bloke AND b.durum IN ('SERBEST','DEPODA')) AS stokta,
+             sum(b.miktar) FILTER (WHERE NOT b.bloke AND b.durum = 'SIPARISE_AYRILDI') AS sevke_ayrilan
         FROM birim b WHERE b.lot_id = l.id AND b.tip = 'FG') f ON true
     LEFT JOIN LATERAL (
       SELECT sum(b.ilk_miktar) AS karantina,

@@ -164,6 +164,20 @@ Sunucuda örnek hesapların şifreleri **rastgele üretilir** ve **yalnızca bu 
 
 Yedekler sunucu diskinde durur. Ayda bir Mac'e indir: sunucu tamamen giderse yedek de gider.
 
+## Demo verisini yenileme
+
+Demo kayıtları son 7 iş gününe yayılır; "bugün" adımları komutun çalıştığı saate göre yazılır. Sunumdan hemen önce yenilemek en iyisidir.
+
+```
+bash /opt/iso-kys/sunucu/demo-sifirla.sh          # önce bak: ne silinecek, ne korunacak (hiçbir şey değişmez)
+bash /opt/iso-kys/sunucu/demo-sifirla.sh --evet   # yedek alır, siler, yeniden yükler
+```
+
+- Kullanıcılar (şifre, PIN, rol), firma kodu, unvanı ve ayarları korunur.
+- Tanımlar ekranından örnek olmayan bir makine, ürün, müşteri vb. girilmişse hiçbir şey yapmadan durur.
+- Her seferinde önce `yedekler/demo_oncesi_*.dump` yedeği alınır.
+- Gerçek kullanıma geçildiğinde bu komut bir daha çalıştırılmaz.
+
 ## Başka sunucuya taşıma
 
 1. Eski sunucuda yedek al ve indir (yukarıdaki tablo).

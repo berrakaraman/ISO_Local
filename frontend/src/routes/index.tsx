@@ -414,6 +414,7 @@ function GelistirmeHesaplari() {
     { ad: "mehmet", sifre: "Mehmet.1234", rol: "Üretim şefi" },
     { ad: "ayse", sifre: "Ayse.1234", rol: "Depo" },
     { ad: "ahmet", sifre: "Ahmet.1234", rol: "Operatör" },
+    { ad: "said", sifre: "Said.1234", rol: "Kalite" },
     { ad: "denetci", sifre: "Denetci.1234", rol: "Denetçi" },
   ];
   return (

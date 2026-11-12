@@ -71,6 +71,8 @@ async function hammaddeIptal(c, ctx, lotNo, gerekce) {
     tablo: "lot", kayitId: lot.id, islem: "IPTAL",
     degisiklikler: [{ alan: "durum", eski: lot.durum, yeni: D.IPTAL }], gerekce,
   });
+  // Bekleyen giris kontrolu onayi kapanir (iptal edilen kayit kimsenin onay kutusunda kalmasin)
+  await onayEsitle(c, ctx, "HAMMADDE", lot.no, O.REDDEDILDI, `Kayit iptal edildi: ${gerekce}`);
   return { lotNo: lot.no, iptalEdilenAmbalaj: birimler.length };
 }
 

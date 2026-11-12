@@ -1,0 +1,3099 @@
+diff --git a/.gitignore b/.gitignore
+index 4b82b4a5..02ce7d38 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -28,3 +28,4 @@ backend/yedekler/
+ # Sunucu: yedekler ve gizli ayarlar
+ sunucu/yedekler/
+ sunucu/ilk-sifreler.txt
++sunucu/demo-sifirla_*.log
+diff --git a/backend/scripts/akis-testi.js b/backend/scripts/akis-testi.js
+index eb7ada95..28e133e2 100644
+--- a/backend/scripts/akis-testi.js
++++ b/backend/scripts/akis-testi.js
+@@ -89,7 +89,7 @@ async function main() {
+   const sefKisi = kisilerKalite.find((x) => x.roller.includes("SEF"));
+   const kaliteKisi = (await ok("Onaya atanabilecek kalite kisileri", depo, "GET", "/onaylar/kisiler?rol=KALITE")).find((x) => x.roller.includes("KALITE"));
+   esit("Kisi kendini onay listesinde gormez", (await istek(depo, "GET", "/onaylar/kisiler")).veri.some((x) => x.id === depoKisi.id), false);
+-  esit("Is emri onaylayicilari yalnizca kalite/yonetim", (await istek(sef, "GET", "/onaylar/kisiler?tur=IS_EMRI")).veri.map((x) => x.adSoyad), [kaliteKisi.adSoyad]);
++  esit("Is emri onaylayicilari yalnizca kalite/yonetim", (await istek(sef, "GET", "/onaylar/kisiler?tur=IS_EMRI")).veri.map((x) => x.adSoyad), [kaliteKisi.adSoyad, "Said Kalite"]);
+   const onayla = (ad, onayId) => ok(ad, kalite, "POST", `/onaylar/${onayId}/karar`, { durum: "ONAYLANDI" });
+ 
+   console.log("\n3) Mal kabul ve giris kontrolu");
+@@ -275,6 +275,8 @@ async function main() {
+   await ok("Lot iptal (silinmez)", depo, "POST", `/hammadde/lotlar/${k2.lot.no}/iptal`, { gerekce: "Irsaliye yanlis firmaya aitmis" });
+   const iptalSatir = (await istek(depo, "GET", "/hammadde/lotlar")).veri.find((x) => x.no === k2.lot.no);
+   esit("Iptal kaydi listede duruyor", [iptalSatir.durum, iptalSatir.iptalEdenAd, iptalSatir.kalanMiktar], ["IPTAL", depoKisi.adSoyad, 0]);
++  const bekleyenRm = (await istek(kalite, "GET", "/onaylar?durum=BEKLIYOR")).veri;
++  esit("Iptal edilen hammadde onay kutusunda kalmaz", bekleyenRm.some((x) => x.kayitNo === k2.lot.no), false);
+   esit("Iptal edilen ambalaj barkodu hala bulunur", (await istek(depo, "GET", `/barkod/${k2.lot.no}-01`)).durum, 200);
+   await engel("Iptal edilmis lota karar", "IPTAL_EDILMIS", kalite, "POST", `/hammadde/lotlar/${k2.lot.no}/kontrol`, { karar: "KABUL" });
+   const bk2 = await ok("Iptal edilen lotun bakiyesi", kalite, "GET", `/hammadde/lotlar/${k2.lot.no}/bakiye`);
+@@ -306,6 +308,8 @@ async function main() {
+   await engel("Kisa gerekceyle is emri iptali", "GECERSIZ_ISTEK", sef, "POST", `/is-emirleri/${ie2.isEmri.no}/iptal`, { gerekce: "x" });
+   await ok("Is emri iptal (silinmez)", sef, "POST", `/is-emirleri/${ie2.isEmri.no}/iptal`, { gerekce: "Musteri siparisi erteledi" });
+   await engel("Iptal edilmis is emri onaylanir", "YANLIS_DURUM", kalite, "POST", `/onaylar/${ie2.onay.id}/karar`, { durum: "ONAYLANDI" });
++  const bekleyenler = (await istek(kalite, "GET", "/onaylar?benim=1&durum=BEKLIYOR")).veri;
++  esit("Iptal edilen is emri onay kutusunda kalmaz", bekleyenler.some((x) => x.kayitNo === ie2.isEmri.no), false);
+   const ieListe = await ok("F-02 listesi", sef, "GET", "/is-emirleri");
+   const ie2Satir = ieListe.find((x) => x.no === ie2.isEmri.no);
+   esit("F-02 iptal eden ve kaydeden", [ie2Satir.durum, ie2Satir.iptalEdenAd, ie2Satir.olusturanAd], ["IPTAL", sefKisi.adSoyad, sefKisi.adSoyad]);
+@@ -323,6 +327,8 @@ async function main() {
+   const sv2Satir = svListe.find((x) => x.no === sv2);
+   esit("F-06 hazirlayan / sevk eden / onaylayan / lot", [sv3Satir.olusturanAd, sv3Satir.onaylayanAd, sv3Satir.onayKararVerenAd, sv3Satir.lotlar], [depoKisi.adSoyad, depoKisi.adSoyad, kaliteKisi.adSoyad, fgLot]);
+   esit("Iptal edilen sevkiyat duruyor", [sv2Satir.durum, sv2Satir.iptalEdenAd], ["IPTAL", depoKisi.adSoyad]);
++  const bekleyenSv = (await istek(kalite, "GET", "/onaylar?durum=BEKLIYOR")).veri;
++  esit("Iptal edilen sevkiyat onay kutusunda kalmaz", bekleyenSv.some((x) => x.kayitNo === sv2), false);
+   esit("Iptalle parca 04 serbest", (await istek(depo, "GET", `/barkod/${kesim.birimler[3].barkod}`)).veri.birim.durum, "SERBEST");
+   for (const [tur, no] of [["URETIM_LOT", fgLot], ["KARANTINA", kr1.karantina.barkod], ["SEVKIYAT", sv3.no]]) {
+     const g = await ok(`${tur} gecmisi`, kalite, "GET", `/gecmis/${tur}/${no}`);
+diff --git a/backend/scripts/demo-sifirla.js b/backend/scripts/demo-sifirla.js
+new file mode 100644
+index 00000000..fc503754
+--- /dev/null
++++ b/backend/scripts/demo-sifirla.js
+@@ -0,0 +1,186 @@
++// Demo verisini silip yeniden yukler. YALNIZCA bu projenin veritabanina dokunur.
++//
++//   node scripts/demo-sifirla.js          -> KURU CALISMA: ne silinecegini ve neyin korunacagini gosterir, hicbir sey degistirmez
++//   node scripts/demo-sifirla.js --evet   -> siler, semayi bastan kurar, tanimlari (seed) yukler, demo verisini yukler
++//
++// Korunanlar: butun kullanicilar (sifreleri, PIN'leri, rolleri, aktif/pasif durumu aynen geri yazilir),
++//             firma kodu, unvani ve firma ayarlari.
++// Silinenler: hammadde, is emri, lot, sevkiyat, KYS kayitlari ve gecmisleri (yani demo verisi).
++// Yeni eklenen ornek kisiler (ornek: Said) icin yeni sifre uretilir ve bir kez ekrana yazilir.
++//
++// Guvenlik: Tanimlar ekranindan ornek olmayan bir makine / urun / malzeme / tedarikci / musteri vb. eklenmisse
++// (yani gercek tanim girilmisse) hicbir sey yapmadan durur ve bunlari listeler.
++// Sunucuda sunucu/demo-sifirla.sh bunu calistirmadan once veritabaninin yedegini alir.
++const path = require("path");
++const crypto = require("crypto");
++const { spawnSync } = require("child_process");
++const KOK = path.join(__dirname, "..");
++const bcrypt = require(require.resolve("bcryptjs", { paths: [KOK] }));
++const { pool } = require(path.join(KOK, "src/config/db"));
++const { sifirlaSema } = require(path.join(KOK, "src/db/migrate"));
++
++const EVET = process.argv.includes("--evet");
++const URETIM = process.env.NODE_ENV === "production";
++const sql = async (q, p) => (await pool.query(q, p)).rows;
++
++// Ornek tanimlar (seed ve demo bunlari olusturur). Bunlarin disinda bir kayit varsa gercek veri girilmis demektir.
++const ORNEK = {
++  makine: { alan: "kod", degerler: [...Array.from({ length: 16 }, (_, i) => `OR${String(i + 1).padStart(2, "0")}`), "MS01", "EX01", "MT01"] },
++  malzeme: { alan: "kod", degerler: ["PET-025", "PA6-GR", "MB-SYH"] },
++  urun: { alan: "kod", degerler: ["KTS-PET-010", "PS-PA6-012"] },
++  depo_yeri: { alan: "kod", degerler: ["YR-D1-R01", "YR-D1-R02", "YR-KAR", "YR-NUM-01"] },
++  hata_kodu: { alan: "kod", degerler: ["H-01", "H-02", "H-03", "H-04", "H-05", "H-06", "H-07", "H-08"] },
++  olcum_aleti: { alan: "kod", degerler: ["KMP-01", "MKR-01", "KMP-02", "KMP-03", "SM-01"] },
++  tedarikci: { alan: "unvan", degerler: ["Teknofil Lif", "Anka Polimer", "Renkpol Kimya"] },
++  musteri: {
++    alan: "unvan",
++    degerler: ["Ege Beyaz Esya A.S.", "Siemens Sanayi ve Ticaret A.S.", "Ford Otosan", "Arcelik A.S.", "Ege Beyaz Eşya A.Ş.", "Siemens Sanayi ve Ticaret A.Ş.", "Arçelik A.Ş."],
++  },
++};
++const GEREKLI = { berra: "KALITE", mehmet: "SEF", ayse: "DEPO", ahmet: "OPERATOR" };
++
++function rastgeleSifre() {
++  const A = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789";
++  for (;;) {
++    const h = [...crypto.randomBytes(12)].map((x) => A[x % A.length]).join("");
++    const s = `${h.slice(0, 4)}-${h.slice(4, 8)}-${h.slice(8, 12)}`;
++    if (/[a-z]/.test(s) && /[A-Z]/.test(s) && /\d/.test(s)) return s;
++  }
++}
++const anahtar = (k) => (k.kullanici_adi ? `ad:${k.kullanici_adi}` : `sicil:${k.sicil_no}`);
++const dur = (m) => {
++  throw new Error(m);
++};
++
++async function main() {
++  const db = (await sql("SELECT current_database() AS d, current_user AS u"))[0];
++  console.log(`Veritabani: ${db.d} (kullanici ${db.u})`);
++
++  // ---------------- 1) Mevcut durumu oku ----------------
++  const firmalar = await sql("SELECT id, kod, unvan, ayarlar FROM firma");
++  if (firmalar.length !== 1) dur(`Tek firma bekleniyordu, ${firmalar.length} firma var. Hicbir sey yapilmadi.`);
++  const firma = firmalar[0];
++  const kisiler = await sql("SELECT kullanici_adi, ad_soyad, sicil_no, sifre_ozeti, pin_ozeti, roller, aktif FROM kullanici WHERE firma_id = $1 ORDER BY olusturma_zamani", [firma.id]);
++  const sayilar = (await sql(
++    `SELECT (SELECT count(*) FROM lot WHERE tip = 'RM') AS hammadde_lotu, (SELECT count(*) FROM lot WHERE tip = 'FG') AS uretim_lotu,
++            (SELECT count(*) FROM is_emri) AS is_emri, (SELECT count(*) FROM sevkiyat) AS sevkiyat, (SELECT count(*) FROM olay) AS olay,
++            (SELECT count(*) FROM sikayet) AS sikayet, (SELECT count(*) FROM dof) AS dof, (SELECT count(*) FROM degisiklik_izi) AS degisiklik_izi`,
++  ))[0];
++
++  // ---------------- 2) Guvenlik kontrolleri ----------------
++  const fazlalar = [];
++  for (const [tablo, { alan, degerler }] of Object.entries(ORNEK)) {
++    const r = await sql(`SELECT ${alan} AS d FROM ${tablo} WHERE firma_id = $1`, [firma.id]);
++    for (const x of r) if (!degerler.includes(x.d)) fazlalar.push(`${tablo}: ${x.d}`);
++  }
++  for (const [ad, rol] of Object.entries(GEREKLI)) {
++    const k = kisiler.find((x) => x.kullanici_adi === ad);
++    if (!k) dur(`'${ad}' kullanicisi yok; demo bu kisiyle kayit girer. Hicbir sey yapilmadi.`);
++    if (!k.aktif) dur(`'${ad}' kullanicisi pasif; demo bu kisiyle kayit girer. Hicbir sey yapilmadi.`);
++    if (!k.roller.includes(rol) && !k.roller.includes("ADMIN")) dur(`'${ad}' kullanicisinin ${rol} rolu yok; demo icin gerekli. Hicbir sey yapilmadi.`);
++  }
++  const said = kisiler.find((x) => x.kullanici_adi === "said");
++  if (said && (!said.aktif || !said.roller.includes("KALITE"))) dur("'said' kullanicisi pasif ya da KALITE rolu yok; demo icin gerekli. Hicbir sey yapilmadi.");
++
++  console.log(`\nFirma: ${firma.kod} - ${firma.unvan}`);
++  console.log("\nKORUNACAK kisiler (sifre, PIN, rol ve aktiflik aynen geri yazilir):");
++  for (const k of kisiler) console.log(`  ${(k.kullanici_adi || "(kiosk)").padEnd(10)} ${k.ad_soyad.padEnd(18)} [${k.roller.join(", ")}]${k.aktif ? "" : "  (pasif)"}`);
++  if (!said) console.log("  + said       Said Kalite        [KALITE]  (YENI; sifresi uretilip asagida yazilacak)");
++  console.log("\nKORUNACAK firma ayarlari:", JSON.stringify(Object.fromEntries(Object.entries(firma.ayarlar).filter(([k]) => k !== "demo"))));
++  console.log("\nSILINECEK kayitlar (bugunku demo verisi):");
++  for (const [k, v] of Object.entries(sayilar)) console.log(`  ${k.padEnd(14)} ${v}`);
++  if (fazlalar.length) {
++    console.log("\nDURDU: Ornek olmayan tanimlar var (gercek veri girilmis olabilir):");
++    for (const f of fazlalar) console.log(`  - ${f}`);
++    dur("Bu tanimlar silinmesin diye hicbir sey yapilmadi. Bu listeyi gonderin, birlikte karar verelim.");
++  }
++  if (!EVET) {
++    console.log("\nKURU CALISMA: hicbir sey degismedi. Uygulamak icin ayni komutu --evet ile calistirin.");
++    return;
++  }
++
++  // ---------------- 3) Sil ve bastan kur ----------------
++  console.log("\n1/4 Tablolar siliniyor ve bastan kuruluyor...");
++  const c = await pool.connect();
++  try {
++    await c.query("BEGIN");
++    await sifirlaSema(c);
++    await c.query("COMMIT");
++  } catch (e) {
++    await c.query("ROLLBACK").catch(() => {});
++    throw e;
++  } finally {
++    c.release();
++  }
++  const calis = (ad, dosya, envEk = {}) => {
++    const r = spawnSync(process.execPath, [path.join(KOK, dosya)], { cwd: KOK, env: { ...process.env, ...envEk }, encoding: "utf8" });
++    if (r.status !== 0) {
++      console.log(r.stdout || "");
++      console.error(r.stderr || "");
++      dur(`${ad} basarisiz oldu (yukaridaki cikti). Yedekten geri donulebilir.`);
++    }
++    return r.stdout;
++  };
++  console.log(calis("Migration", "src/db/migrate.js").trim().split("\n").map((x) => `    ${x}`).join("\n"));
++  console.log("2/4 Tanimlar (seed) yukleniyor...");
++  // Seed'in yazdigi ornek sifreler kullanilmaz (kisiler asagida eski sifreleriyle geri yazilir); ekrana basilmaz.
++  calis("Seed", "src/db/seed.js", { SEED_FIRMA_KODU: firma.kod, SEED_FIRMA_UNVANI: firma.unvan });
++
++  // ---------------- 4) Kisileri geri yaz ----------------
++  console.log("3/4 Kisiler eski sifre, PIN ve rolleriyle geri yaziliyor...");
++  const yeniFirma = (await sql("SELECT id FROM firma"))[0];
++  const yeniKisiler = await sql("SELECT id, kullanici_adi, sicil_no FROM kullanici WHERE firma_id = $1", [yeniFirma.id]);
++  const eskiler = new Map(kisiler.map((k) => [anahtar(k), k]));
++  for (const k of kisiler) {
++    const var_ = yeniKisiler.find((y) => anahtar(y) === anahtar(k));
++    if (var_) {
++      await pool.query(
++        "UPDATE kullanici SET ad_soyad = $1, sicil_no = $2, sifre_ozeti = $3, pin_ozeti = $4, roller = $5, aktif = $6 WHERE id = $7",
++        [k.ad_soyad, k.sicil_no, k.sifre_ozeti, k.pin_ozeti, k.roller, k.aktif, var_.id],
++      );
++    } else {
++      await pool.query(
++        `INSERT INTO kullanici (firma_id, kullanici_adi, ad_soyad, sicil_no, sifre_ozeti, pin_ozeti, roller, aktif)
++         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
++        [yeniFirma.id, k.kullanici_adi, k.ad_soyad, k.sicil_no, k.sifre_ozeti, k.pin_ozeti, k.roller, k.aktif],
++      );
++    }
++  }
++  const yeniEklenenler = [];
++  for (const y of yeniKisiler) {
++    if (eskiler.has(anahtar(y))) continue;
++    if (URETIM && y.kullanici_adi) {
++      const sifre = rastgeleSifre();
++      const pin = String(crypto.randomInt(0, 10000)).padStart(4, "0");
++      await pool.query("UPDATE kullanici SET sifre_ozeti = $1, pin_ozeti = $2 WHERE id = $3", [await bcrypt.hash(sifre, 10), await bcrypt.hash(pin, 10), y.id]);
++      yeniEklenenler.push({ ad: y.kullanici_adi, sifre, pin, sicil: y.sicil_no });
++    } else {
++      yeniEklenenler.push({ ad: y.kullanici_adi, sifre: "(seed'deki ornek sifre)", pin: "-", sicil: y.sicil_no });
++    }
++  }
++  const kontrolSayi = (await sql("SELECT count(*)::int AS n FROM kullanici"))[0].n;
++  if (kontrolSayi !== kisiler.length + yeniEklenenler.length) dur(`Kisi sayisi tutmadi: ${kontrolSayi} != ${kisiler.length} + ${yeniEklenenler.length}`);
++
++  // ---------------- 5) Demo verisi ----------------
++  console.log("4/4 Demo verisi yukleniyor (API uzerinden, birkac dakika surebilir)...");
++  const demo = require("./demo-veri");
++  await demo.calistir();
++
++  // Firma ayarlari: demo varsayilan ayarlarla yuklenir, sonra onceki ayarlar geri yazilir (demo bilgisi korunur)
++  const eskiAyar = Object.fromEntries(Object.entries(firma.ayarlar).filter(([k]) => k !== "demo"));
++  await pool.query("UPDATE firma SET ayarlar = ayarlar || $1::jsonb", [JSON.stringify(eskiAyar)]);
++
++  console.log("\nKisiler eski sifreleriyle korundu. Herkes bir kez yeniden giris yapmali (eski oturumlar gecersiz).");
++  if (yeniEklenenler.length) {
++    console.log("\nYENI KISI(LER) - bu sifreyi simdi kaydedin, bir daha gosterilmez:");
++    for (const y of yeniEklenenler) console.log(`YENI_KISI  ${y.ad}  sifre: ${y.sifre}  sicil: ${y.sicil || "-"}  PIN: ${y.pin}`);
++  }
++}
++
++main()
++  .then(() => pool.end())
++  .catch(async (e) => {
++    console.error(`\nHATA: ${e.message}`);
++    await pool.end().catch(() => {});
++    process.exit(1);
++  });
+diff --git a/backend/scripts/demo-veri.js b/backend/scripts/demo-veri.js
+new file mode 100644
+index 00000000..dca80957
+--- /dev/null
++++ b/backend/scripts/demo-veri.js
+@@ -0,0 +1,789 @@
++// Demo verisi (surum 2): 8 kisa hikaye, son 7 is gunune yayilmis.
++// Kayitlar gercek kullanici gibi API uzerinden girilir (Ayse mal kabul yapar, Ahmet uretir, Berra ve Said onaylar);
++// her miktar sistemin kurallarindan ve hesaplarindan gecer. Butun adimlar birkac saniyede kaydedilir,
++// sonra kayitlarin zamanlari her adimin "sanal" saatine kaydirilir (asagida ZAMAN KAYDIRMA).
++// Degisiklik izi zinciri kaydirmadan sonra yeniden hesaplanir; iz-dogrula "saglam" cikar.
++//
++// Normalde dogrudan calistirilmaz: scripts/demo-sifirla.js once veritabanini bosaltir, sonra bunu calistirir.
++// Elle (yerelde, bos veritabaninda):  cd backend && node scripts/demo-veri.js   (API calisiyor olmali)
++// Veritabaninda lot, is emri ya da sevkiyat varsa HICBIR SEY yapmadan cikar.
++const path = require("path");
++const crypto = require("crypto");
++const KOK = path.join(__dirname, "..");
++const jwt = require(require.resolve("jsonwebtoken", { paths: [KOK] }));
++const env = require(path.join(KOK, "src/config/env"));
++const { pool } = require(path.join(KOK, "src/config/db"));
++
++const API = process.env.API || `http://127.0.0.1:${env.port}/api`;
++const sql = async (q, p) => (await pool.query(q, p)).rows;
++const bekle = (ms) => new Promise((r) => setTimeout(r, ms));
++const yuv = (n, h = 2) => Math.round(n * 10 ** h) / 10 ** h;
++
++// ---------------------------------------------------------------------------
++// Sanal saat. Turkiye'de yaz saati yok: saat dilimi sabit +03:00.
++// G[0] bugun, G[1] bir onceki is gunu ... G[7] kurulum gunu (tanimlar). Hafta sonlari atlanir.
++// ---------------------------------------------------------------------------
++const IST = 3 * 60 * 60 * 1000;
++const tarihStr = (d) => new Date(d.getTime() + IST).toISOString().slice(0, 10);
++// DEMO_SIMDI yalnizca deneme icindir (ornek: sabah 08:30'da calismis gibi). Normalde su an.
++const SIMDI = process.env.DEMO_SIMDI ? new Date(process.env.DEMO_SIMDI) : new Date();
++const G = [];
++{
++  let d = new Date(`${tarihStr(SIMDI)}T12:00:00+03:00`);
++  G.push(tarihStr(d));
++  while (G.length < 8) {
++    d = new Date(d.getTime() - 86400000);
++    const gun = new Date(d.getTime() + IST).getUTCDay();
++    if (gun !== 0 && gun !== 6) G.push(tarihStr(d));
++  }
++}
++const YARIN = (() => {
++  let d = new Date(`${G[0]}T12:00:00+03:00`);
++  do d = new Date(d.getTime() + 86400000);
++  while ([0, 6].includes(new Date(d.getTime() + IST).getUTCDay()));
++  return tarihStr(d);
++})();
++const takvim = (fark) => tarihStr(new Date(new Date(`${G[0]}T12:00:00+03:00`).getTime() + fark * 86400000));
++const gunEkle = (t, fark) => tarihStr(new Date(new Date(`${t}T12:00:00+03:00`).getTime() + fark * 86400000));
++// Bugunun adimlari 0..285 "dakika" uzerine yazilmistir. Normalde son 5 saate yayilir; sabah erken
++// calistirilirsa (ornek 08:30) 07:00 ile simdi arasina sikistirilir, boylece gece saatleri gorunmez.
++// Her durumda simdiden en az 10 dk once biter (gelecek tarihli kayit olmaz).
++const SABAH7 = new Date(`${tarihStr(SIMDI)}T07:00:00+03:00`).getTime();
++const B = SIMDI.getTime() - 30 * 60000 > SABAH7 ? Math.max(SIMDI.getTime() - 300 * 60000, SABAH7) : SIMDI.getTime() - 300 * 60000;
++const BUGUN_KAT = Math.min(1, (SIMDI.getTime() - 10 * 60000 - B) / (285 * 60000));
++
++const NOKTALAR = []; // { g: gercek zaman (veritabani saati, mikro saniyeli metin), s: sanal zaman (Date) }
++let sanalAd = "";
++async function an(gi, saat) {
++  const s = gi === "bugun" ? new Date(Math.floor((B + saat * 60000 * BUGUN_KAT) / 1000) * 1000) : new Date(`${G[gi]}T${saat}:00+03:00`);
++  const son = NOKTALAR[NOKTALAR.length - 1];
++  if (son && s <= son.s) throw new Error(`Sanal saat geri gidiyor: ${s.toISOString()} <= ${son.s.toISOString()}`);
++  if (s > SIMDI) throw new Error(`Sanal saat gelecekte: ${s.toISOString()}`);
++  await bekle(4);
++  const g = (await sql(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS g`))[0].g;
++  await bekle(4);
++  NOKTALAR.push({ g, s });
++  sanalAd = new Date(s.getTime() + IST).toISOString().slice(0, 16).replace("T", " ");
++}
++
++// ---------------------------------------------------------------------------
++async function istek(kim, yontem, yol, govde) {
++  const r = await fetch(`${API}${yol}`, {
++    method: yontem,
++    headers: { "Content-Type": "application/json", Authorization: `Bearer ${kim.token}` },
++    body: govde ? JSON.stringify(govde) : undefined,
++  });
++  const veri = await r.json().catch(() => ({}));
++  if (!r.ok) {
++    const h = veri.hata || {};
++    throw new Error(`${yontem} ${yol} -> ${r.status} ${h.kod || ""} ${h.mesaj || ""}`);
++  }
++  return veri;
++}
++const yap = async (ad, kim, yontem, yol, govde) => {
++  const v = await istek(kim, yontem, yol, govde);
++  console.log(`  ${sanalAd}  ${kim.kisa.padEnd(6)} ${ad}`);
++  return v;
++};
++const baslik = (b) => console.log(`\n=== ${b}`);
++const KONTROLLER = []; // matematik kontrolleri: { ad, beklenen, bulunan }
++const kontrol = (ad, beklenen, bulunan) => {
++  const ok = JSON.stringify(beklenen) === JSON.stringify(bulunan);
++  KONTROLLER.push({ ad, ok, beklenen, bulunan });
++  console.log(`      ${ok ? "✔" : "✘"} ${ad}: beklenen ${JSON.stringify(beklenen)}, bulunan ${JSON.stringify(bulunan)}`);
++};
++
++async function main() {
++  // ---------------- Guvenlik: yalnizca bos veritabaninda calisir ----------------
++  const dolu = (await sql("SELECT (SELECT count(*) FROM lot) + (SELECT count(*) FROM is_emri) + (SELECT count(*) FROM sevkiyat) AS n"))[0].n;
++  if (Number(dolu) > 0) {
++    console.log("Veritabaninda zaten lot / is emri / sevkiyat var. Demo verisi yuklenmedi, hicbir sey degismedi.");
++    return { yuklendi: false };
++  }
++  const firmalar = await sql("SELECT id FROM firma");
++  if (firmalar.length !== 1) throw new Error(`Tek firma bekleniyordu, ${firmalar.length} bulundu`);
++
++  const kisi = async (kullaniciAdi, kisa, rol) => {
++    const k = (await sql("SELECT id, firma_id, ad_soyad, sicil_no, roller FROM kullanici WHERE kullanici_adi = $1 AND aktif", [kullaniciAdi]))[0];
++    if (!k) throw new Error(`'${kullaniciAdi}' kullanicisi bulunamadi ya da pasif.`);
++    if (!k.roller.includes(rol) && !k.roller.includes("ADMIN")) throw new Error(`'${kullaniciAdi}' kullanicisinin ${rol} rolu yok.`);
++    const token = jwt.sign({ sub: k.id, firmaId: k.firma_id, adSoyad: k.ad_soyad, sicilNo: k.sicil_no, roller: k.roller, kiosk: false }, env.jwtSecret, { expiresIn: "2h" });
++    return { id: k.id, ad: k.ad_soyad, kisa, token };
++  };
++  const berra = await kisi("berra", "Berra", "KALITE");
++  const said = await kisi("said", "Said", "KALITE");
++  const mehmet = await kisi("mehmet", "Mehmet", "SEF");
++  const ayse = await kisi("ayse", "Ayşe", "DEPO");
++  const ahmet = await kisi("ahmet", "Ahmet", "OPERATOR");
++
++  // Kurulum gunu: tanimlar (seed) bu gunun sabahina tasinir
++  const kurulum = (await sql(`SELECT to_char(min(olusturma_zamani) AT TIME ZONE 'UTC' - interval '1 second', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS g FROM firma`))[0].g;
++  NOKTALAR.push({ g: kurulum, s: new Date(`${G[7]}T08:00:00+03:00`) });
++  await an(7, "09:00");
++  console.log(`Demo verisi yukleniyor. Is gunleri: ${[...G].reverse().join(", ")} (bugun ${G[0]})`);
++
++  const t = await istek(berra, "GET", "/tanimlar");
++  const bul = (liste, f, ad) => {
++    const x = liste.find(f);
++    if (!x) throw new Error(`Tanim bulunamadi: ${ad}`);
++    return x;
++  };
++  const malzeme = (kod) => bul(t.malzemeler, (x) => x.kod === kod, kod);
++  const makine = (kod) => bul(t.makineler, (x) => x.kod === kod, kod);
++  const tedarikci = (bas) => bul(t.tedarikciler, (x) => x.unvan.startsWith(bas), bas);
++  const musteri = (bas) => bul(t.musteriler, (x) => x.unvan.startsWith(bas), bas);
++  const kts = bul(t.urunler, (x) => x.kod === "KTS-PET-010", "KTS-PET-010");
++  const spiral = bul(t.urunler, (x) => x.kod === "PS-PA6-012", "PS-PA6-012");
++  const ARC = musteri("Ar"); // Arcelik / Arçelik
++  const FORD = musteri("Ford");
++  const SIE = musteri("Siemens");
++  const EGE = musteri("Ege");
++  const kar = (u, asama) => t.karakteristikler.filter((x) => x.urunId === u.id && x.asama === asama).sort((a, b) => a.sira - b.sira);
++  const olc = (u, asama, degerler) => {
++    const k = kar(u, asama);
++    if (k.length !== degerler.length) throw new Error(`${u.kod} ${asama}: ${k.length} karakteristik var, ${degerler.length} deger verildi`);
++    return k.map((x, i) => ({ karakteristikId: x.id, deger: degerler[i] }));
++  };
++  const onayla = (ad, kim, onayId) => yap(ad, kim, "POST", `/onaylar/${onayId}/karar`, { durum: "ONAYLANDI" });
++  const isEmri = async (ad, makineKod, u, hedef, onaylayan, ek) => {
++    const r = await yap(ad, mehmet, "POST", "/is-emirleri", { urunId: u.id, makineId: makine(makineKod).id, hedefMiktar: hedef, atananId: onaylayan.id, ...ek });
++    return { no: r.isEmri.no, onayId: r.onay.id };
++  };
++  const kabul = (ad, kod, ted, tedLot, ambalajlar, depoYeri, kontrolcu, aciklama) =>
++    yap(ad, ayse, "POST", "/hammadde/kabul", {
++      malzemeId: malzeme(kod).id, tedarikciId: tedarikci(ted).id, tedarikciLot: tedLot, coaVar: true, ambalajlar, depoYeri, atananId: kontrolcu.id, aciklama,
++    });
++  const P = (k, i) => k.birimler[i].barkod;
++
++  // ---------------- Kurulum gunu: olcum aletleri ve egitim kayitlari ----------------
++  baslik(`Kurulum gunu (${G[7]}): olcum aletleri ve egitimler`);
++  await yap("Yeni ölçüm aleti: KMP-03 dijital kumpas", berra, "POST", "/kys/aletler", { kod: "KMP-03", ad: "Dijital kumpas 0-150 mm", konum: "Ekstrüzyon", periyotAy: 12 });
++  await yap("KMP-03 kalibrasyon: uygun", berra, "POST", "/kys/aletler/KMP-03/kalibrasyon", { tarih: takvim(-25), sonuc: "UYGUN", sertifikaNo: "KAL-2611-07", yapan: "Akredite kalibrasyon laboratuvarı" });
++  await yap("Yeni ölçüm aleti: SM-01 çelik şerit metre", berra, "POST", "/kys/aletler", { kod: "SM-01", ad: "Çelik şerit metre 5 m", konum: "Metraj ve kesim", periyotAy: 12 });
++  await yap("SM-01 kalibrasyon: uygun", berra, "POST", "/kys/aletler/SM-01/kalibrasyon", { tarih: takvim(-300), sonuc: "UYGUN", sertifikaNo: "KAL-2601-02", yapan: "İç kalibrasyon (referans metreye karşı)" });
++  await an(7, "10:00");
++  await yap("Eğitim: Ahmet, ilk parça ve proses ölçümü", berra, "POST", "/kys/egitimler", { kullaniciId: ahmet.id, konu: "İlk parça ve proses ölçümü", tarih: takvim(-40), egitmen: "Berra Karaman", sureSaat: 2, sonuc: "BASARILI", gecerlilikBitis: takvim(325) });
++  await yap("Eğitim: Ayşe, mal kabul ve etiketleme", berra, "POST", "/kys/egitimler", { kullaniciId: ayse.id, konu: "Mal kabul, etiketleme ve depo yerleşimi", tarih: takvim(-45), egitmen: "Berra Karaman", sureSaat: 3, sonuc: "BASARILI", gecerlilikBitis: takvim(320) });
++  await yap("Eğitim: Said, son kontrol ve karantina kararları", berra, "POST", "/kys/egitimler", { kullaniciId: said.id, konu: "Son kontrol, karantina kararları ve dört göz kuralı", tarih: takvim(-20), egitmen: "Berra Karaman", sureSaat: 3, sonuc: "BASARILI", gecerlilikBitis: takvim(345) });
++  await yap("Eğitim: Mehmet, ISO 9001 farkındalık (süresi dolmuş)", berra, "POST", "/kys/egitimler", { kullaniciId: mehmet.id, konu: "ISO 9001 farkındalık", tarih: takvim(-400), egitmen: "Dış eğitmen", sureSaat: 8, sonuc: "BASARILI", gecerlilikBitis: takvim(-35) });
++
++  // =====================================================================================
++  // G6: mal kabul + Hikaye 1 (sorunsuz is, OR01, Arcelik)
++  // =====================================================================================
++  baslik(`${G[6]}: mal kabul ve Hikâye 1 (OR01, sorunsuz iş)`);
++  await an(6, "08:10");
++  const L1 = await kabul("Mal kabul: PET 4 x 25 kg, Teknofil TF-2611-201", "PET-025", "Teknofil", "TF-2611-201", [25, 25, 25, 25], "YR-D1-R01", berra, "İrsaliye 4471. Tedarikçi sertifikası (CoA) geldi.");
++  await an(6, "08:20");
++  const L2 = await kabul("Mal kabul: PA6 granül 2 x 25 kg, Anka AP-26-447", "PA6-GR", "Anka", "AP-26-447", [25, 25], "YR-D1-R02", said, "İrsaliye A-1180. Çuvallar sağlam.");
++  await an(6, "08:25");
++  const L3 = await kabul("Mal kabul: siyah masterbatch 1 x 5 kg, Renkpol RP-0912", "MB-SYH", "Renkpol", "RP-0912", [5], "YR-D1-R02", said, "İrsaliye RP-552.");
++  await an(6, "08:30");
++  const L4 = await kabul("Mal kabul: PET 2 x 25 kg, Anka AP-PET-033", "PET-025", "Anka", "AP-PET-033", [25, 25], "YR-D1-R02", berra, "İrsaliye A-1181.");
++  await an(6, "08:50");
++  await yap(`Giriş kontrolü ${L1.lot.no}: kabul`, berra, "POST", `/hammadde/lotlar/${L1.lot.no}/kontrol`, { karar: "KABUL", not: "Çap 0,25 mm ölçüldü, sertifikayla uyumlu." });
++  await an(6, "09:00");
++  await yap(`Giriş kontrolü ${L2.lot.no}: kabul`, said, "POST", `/hammadde/lotlar/${L2.lot.no}/kontrol`, { karar: "KABUL", not: "Nem ve renk kontrolü uygun." });
++  await an(6, "09:05");
++  await yap(`Giriş kontrolü ${L3.lot.no}: kabul`, said, "POST", `/hammadde/lotlar/${L3.lot.no}/kontrol`, { karar: "KABUL", not: "Renk numunesi standartla aynı." });
++  await an(6, "09:20");
++  await yap(`Giriş kontrolü ${L4.lot.no}: RET`, berra, "POST", `/hammadde/lotlar/${L4.lot.no}/kontrol`, {
++    karar: "RET", not: "Monofilament çapı 0,25 mm yerine 0,29 mm ölçüldü, sertifikayla uyumsuz. Parti tedarikçiye iade edilecek.",
++  });
++  const b = (L, i) => L.birimler[i].barkod;
++
++  await an(6, "09:30");
++  const S1 = await isEmri("İş emri açtı: OR01, 300 m, Arçelik", "OR01", kts, 300, berra, { planlananTarih: G[6], siparisNo: "ARC-2611-031", musteriId: ARC.id, aciklama: "Arçelik çamaşır makinesi kablo demeti için" });
++  await an(6, "09:40");
++  await onayla(`İş emri ${S1.no} onaylandı`, berra, S1.onayId);
++  await an(6, "10:00");
++  await yap(`${b(L1, 0)} bobinini OR01 hattına çekti`, ayse, "POST", "/hammadde/cekis", { barkod: b(L1, 0), isEmriNo: S1.no });
++  await an(6, "10:05");
++  await yap("İşi başlattı", ahmet, "POST", `/is-emirleri/${S1.no}/baslat`);
++  await an(6, "10:07");
++  await yap(`Bobini makineye okuttu: ${b(L1, 0)}`, ahmet, "POST", `/is-emirleri/${S1.no}/bagla`, { barkod: b(L1, 0) });
++  await an(6, "10:20");
++  await yap("İlk parça: dış çap 10,02 mm, örgü 12,1 tur/cm, uygun", berra, "POST", `/is-emirleri/${S1.no}/ilk-parca`, { olcumler: olc(kts, "ILK_PARCA", [10.02, 12.1]), aletKod: "KMP-01" });
++  await an(6, "12:00");
++  await yap("Proses ölçümü uygun", ahmet, "POST", `/is-emirleri/${S1.no}/proses-olcum`, { olcumler: olc(kts, "PROSES", [10.05, 12.0]), aletKod: "KMP-01" });
++  await an(6, "13:40");
++  await yap("Proses ölçümü uygun", ahmet, "POST", `/is-emirleri/${S1.no}/proses-olcum`, { olcumler: olc(kts, "PROSES", [10.03, 12.2]), aletKod: "KMP-01" });
++  await an(6, "14:30");
++  const T1 = (await yap("Topu bitirdi: 300 m", ahmet, "POST", `/is-emirleri/${S1.no}/top-bitir`, { metraj: 300 })).lot.no;
++  await an(6, "14:40");
++  const bit1 = await yap("İşi bitirdi: bobinde kalan 1 kg depoya döndü", ahmet, "POST", `/is-emirleri/${S1.no}/bitir`, { iadeler: [{ barkod: b(L1, 0), kalanMiktar: 1 }] });
++  kontrol("Hikâye 1: 25 − 1 = 24 kg × 1000 / 80 g/m = beklenen 300 m, üretilen 300 m", [300, 300, "TAMAMLANDI"], [bit1.denge.beklenenMetraj, bit1.denge.uretilenToplam, bit1.durum]);
++  await an(6, "15:00");
++  await yap(`Şahit numune aldı (1 m): ${T1}`, berra, "POST", `/lotlar/${T1}/numune`, { arsivYeri: "YR-NUM-01" });
++  await an(6, "15:20");
++  const k1 = await yap("Kesti: 100 + 100 + 99 m (numuneden sonra top 299 m)", ahmet, "POST", `/lotlar/${T1}/kesim`, { parcalar: [100, 100, 99], olcumler: olc(kts, "METRAJ", [10.04]) });
++  kontrol("Hikâye 1 kesim: 299 = 100 + 100 + 99, fire 0", [299, 0], [k1.hesap.topMetre, k1.hesap.fire]);
++  await an(6, "15:40");
++  await yap("Son kontrol: üç parça serbest", berra, "POST", "/kalite/son-kontrol", { lotNo: T1, karar: "SERBEST" });
++  await an(6, "16:30");
++  await yap("Planlı bakım kaydı: OR02, 30 dk", mehmet, "POST", "/kys/bakimlar", { makineId: makine("OR02").id, tur: "PLANLI", tarih: G[6], yapilan: "Yağlama, rulman ve kayış kontrolü", durusDk: 30 });
++
++  // =====================================================================================
++  // G5: Hikaye 2 (ilk parca reddi + malzeme farki), Hikaye 5 uretim, Hikaye 4 is emri acilisi
++  // =====================================================================================
++  baslik(`${G[5]}: Hikâye 2 (OR03, ilk parça reddi ve malzeme farkı), Hikâye 5 üretimi (OR06)`);
++  await an(5, "08:05");
++  const L5 = await kabul("Mal kabul: PET 4 x 25 kg, Teknofil TF-2611-215", "PET-025", "Teknofil", "TF-2611-215", [25, 25, 25, 25], "YR-D1-R01", said, "İrsaliye 4502. CoA geldi.");
++  await an(5, "08:10");
++  const L6 = await kabul("Mal kabul: PET 2 x 25 kg, Teknofil TF-2611-233", "PET-025", "Teknofil", "TF-2611-233", [25, 25], "YR-D1-R01", said, "İrsaliye 4503. CoA geldi.");
++  await an(5, "08:30");
++  await yap(`Giriş kontrolü ${L5.lot.no}: kabul`, said, "POST", `/hammadde/lotlar/${L5.lot.no}/kontrol`, { karar: "KABUL", not: "Çap 0,25 mm, uygun." });
++  await an(5, "08:35");
++  await yap(`Giriş kontrolü ${L6.lot.no}: kabul`, said, "POST", `/hammadde/lotlar/${L6.lot.no}/kontrol`, { karar: "KABUL", not: "Çap 0,25 mm, uygun." });
++  await an(5, "08:40");
++  const S2 = await isEmri("İş emri açtı: OR03, 300 m, Ford", "OR03", kts, 300, said, { planlananTarih: G[5], siparisNo: "FO-77812", musteriId: FORD.id });
++  await an(5, "08:45");
++  const S4 = await isEmri("İş emri açtı: OR04, 400 m, Arçelik", "OR04", kts, 400, berra, { planlananTarih: G[5], siparisNo: "ARC-2611-034", musteriId: ARC.id });
++  await an(5, "08:50");
++  const S5 = await isEmri("İş emri açtı: OR06, 200 m, Ege Beyaz Eşya", "OR06", kts, 200, berra, { planlananTarih: G[5], siparisNo: "EGE-5521", musteriId: EGE.id });
++  await an(5, "09:00");
++  await onayla(`İş emri ${S2.no} onaylandı`, said, S2.onayId);
++  await an(5, "09:03");
++  await onayla(`İş emri ${S4.no} onaylandı`, berra, S4.onayId);
++  await an(5, "09:05");
++  await onayla(`İş emri ${S5.no} onaylandı`, berra, S5.onayId);
++  await an(5, "09:10");
++  await yap("İşi başlattı (OR03)", ahmet, "POST", `/is-emirleri/${S2.no}/baslat`);
++  await an(5, "09:12");
++  await yap(`Bobini depodan doğrudan makineye okuttu: ${b(L1, 1)}`, ahmet, "POST", `/is-emirleri/${S2.no}/bagla`, { barkod: b(L1, 1) });
++  await an(5, "09:25");
++  await yap("İlk parça: dış çap 10,6 mm (sınır 10,3) → UYGUN DEĞİL", said, "POST", `/is-emirleri/${S2.no}/ilk-parca`, { olcumler: olc(kts, "ILK_PARCA", [10.6, 12.0]), aletKod: "KMP-01" });
++  await an(5, "09:50");
++  await yap("Ayar düzeltildi, ilk parça 2. denemede uygun (10,05 mm)", said, "POST", `/is-emirleri/${S2.no}/ilk-parca`, { olcumler: olc(kts, "ILK_PARCA", [10.05, 12.1]), aletKod: "KMP-01" });
++  await an(5, "10:00");
++  await yap(`${b(L5, 2)} bobinini OR06 hattına çekti`, ayse, "POST", "/hammadde/cekis", { barkod: b(L5, 2), isEmriNo: S5.no });
++  await an(5, "10:05");
++  await yap("İşi başlattı (OR06)", ahmet, "POST", `/is-emirleri/${S5.no}/baslat`);
++  await an(5, "10:07");
++  await yap(`Bobini makineye okuttu: ${b(L5, 2)}`, ahmet, "POST", `/is-emirleri/${S5.no}/bagla`, { barkod: b(L5, 2) });
++  await an(5, "10:20");
++  await yap("İlk parça uygun (OR06)", berra, "POST", `/is-emirleri/${S5.no}/ilk-parca`, { olcumler: olc(kts, "ILK_PARCA", [10.1, 12.0]), aletKod: "KMP-01" });
++  await an(5, "11:30");
++  await yap("Proses ölçümü uygun (OR03)", ahmet, "POST", `/is-emirleri/${S2.no}/proses-olcum`, { olcumler: olc(kts, "PROSES", [10.04, 12.1]), aletKod: "KMP-01" });
++  await an(5, "11:45");
++  await yap("Proses ölçümü uygun (OR06, 10,22 mm; sınıra yakın)", ahmet, "POST", `/is-emirleri/${S5.no}/proses-olcum`, { olcumler: olc(kts, "PROSES", [10.22, 12.0]), aletKod: "KMP-01" });
++  await an(5, "13:00");
++  await yap("Proses ölçümü uygun (OR03)", ahmet, "POST", `/is-emirleri/${S2.no}/proses-olcum`, { olcumler: olc(kts, "PROSES", [10.02, 12.0]), aletKod: "KMP-01" });
++  await an(5, "13:15");
++  await yap("Proses ölçümü uygun (OR06, 10,26 mm)", ahmet, "POST", `/is-emirleri/${S5.no}/proses-olcum`, { olcumler: olc(kts, "PROSES", [10.26, 12.1]), aletKod: "KMP-01" });
++  await an(5, "13:40");
++  const T5 = (await yap("Topu bitirdi (OR06): 200 m", ahmet, "POST", `/is-emirleri/${S5.no}/top-bitir`, { metraj: 200 })).lot.no;
++  await an(5, "13:50");
++  const bit5 = await yap("İşi bitirdi (OR06): bobinde kalan 9 kg depoya döndü", ahmet, "POST", `/is-emirleri/${S5.no}/bitir`, { iadeler: [{ barkod: b(L5, 2), kalanMiktar: 9 }] });
++  kontrol("Hikâye 5: 25 − 9 = 16 kg → beklenen 200 m, üretilen 200 m", [200, 200, "TAMAMLANDI"], [bit5.denge.beklenenMetraj, bit5.denge.uretilenToplam, bit5.durum]);
++  await an(5, "14:20");
++  const T2 = (await yap("Topu bitirdi (OR03): 280 m", ahmet, "POST", `/is-emirleri/${S2.no}/top-bitir`, { metraj: 280 })).lot.no;
++  await an(5, "14:30");
++  const bit2 = await yap("İşi bitirdi (OR03): bobin tamamen kullanıldı", ahmet, "POST", `/is-emirleri/${S2.no}/bitir`, {});
++  kontrol("Hikâye 2: 25 kg → beklenen 312,5 m, üretilen 280 m, fark %10,4 > %3", [312.5, 280, 10.4, "TAMAMLANDI_FARK"], [bit2.denge.beklenenMetraj, bit2.denge.uretilenToplam, bit2.denge.farkYuzde, bit2.durum]);
++  await an(5, "14:50");
++  await yap("Farkı açıkladı", mehmet, "POST", `/is-emirleri/${S2.no}/fark-aciklamasi`, {
++    aciklama: "İlk parça reddedildikten sonra ayar yapılırken bobin başından yaklaşık 2,5 kg tel atıldı ve tartılmadı. 2,5 kg = 31 m; 280 + 31 = 311 m, beklenen 312,5 m ile uyumlu. Operatöre ayar telini tartıp yazması söylendi.",
++  });
++  await an(5, "15:00");
++  await yap(`Şahit numune aldı: ${T5}`, berra, "POST", `/lotlar/${T5}/numune`, { arsivYeri: "YR-NUM-01" });
++  await an(5, "15:10");
++  const k5 = await yap("Kesti (OR06 topu): 100 + 99 m", ahmet, "POST", `/lotlar/${T5}/kesim`, { parcalar: [100, 99], olcumler: olc(kts, "METRAJ", [10.25]) });
++  await an(5, "15:25");
++  await yap("Son kontrol: OR06 parçaları serbest", berra, "POST", "/kalite/son-kontrol", { lotNo: T5, karar: "SERBEST" });
++  await an(5, "15:40");
++  await yap(`Şahit numune aldı: ${T2}`, said, "POST", `/lotlar/${T2}/numune`, { arsivYeri: "YR-NUM-01" });
++  await an(5, "15:55");
++  const k2 = await yap("Kesti (OR03 topu): 100 + 100 + 79 m", ahmet, "POST", `/lotlar/${T2}/kesim`, { parcalar: [100, 100, 79], olcumler: olc(kts, "METRAJ", [10.03]) });
++  kontrol("Hikâye 2 kesim: 279 = 100 + 100 + 79", [279, 0], [k2.hesap.topMetre, k2.hesap.fire]);
++  await an(5, "16:10");
++  await yap("Son kontrol: OR03 parçaları serbest", said, "POST", "/kalite/son-kontrol", { lotNo: T2, karar: "SERBEST" });
++  await an(5, "16:20");
++  const sv1 = await yap("Sevkiyat hazırladı: Arçelik, 2 x 100 m (Hikâye 1)", ayse, "POST", "/sevkiyat", { musteriId: ARC.id, urunId: kts.id, siparisNo: "ARC-2611-031", atananId: said.id });
++  for (const bk of [P(k1, 0), P(k1, 1)]) await istek(ayse, "POST", `/sevkiyat/${sv1.no}/okut`, { barkod: bk });
++  await an(5, "16:30");
++  await onayla(`Sevkiyat ${sv1.no} onaylandı`, said, sv1.onay.id);
++  await an(5, "16:40");
++  await yap("Sevk etti (irsaliye IRS-2611-0101)", ayse, "POST", `/sevkiyat/${sv1.no}/onayla`, { irsaliyeNo: "IRS-2611-0101" });
++  await an(5, "16:50");
++  await yap(`99 m parçayı rafa koydu: ${P(k1, 2)} → YR-D1-R01`, ayse, "POST", `/birimler/${P(k1, 2)}/yerlestir`, { yerKodu: "YR-D1-R01" });
++
++  // =====================================================================================
++  // G4: Hikaye 3 (spiral, iki hammadde) ve Hikaye 4 (OR04: ariza, karantina kararlari)
++  // =====================================================================================
++  baslik(`${G[4]}: Hikâye 3 (EX01 spiral) ve Hikâye 4 (OR04: arıza ve dört karantina)`);
++  await an(4, "08:00");
++  await yap("Planlı bakım kaydı: EX01, 60 dk", mehmet, "POST", "/kys/bakimlar", { makineId: makine("EX01").id, tur: "PLANLI", tarih: G[4], yapilan: "Vida ve kovan temizliği, ısıtıcı rezistans ölçümü", kullanilanParca: "J tipi termokupl", durusDk: 60 });
++  await an(4, "08:10");
++  const S3 = await isEmri("İş emri açtı: EX01 spiral, 200 m, Siemens", "EX01", spiral, 200, said, { planlananTarih: G[4], siparisNo: "SIE-4410", musteriId: SIE.id });
++  await an(4, "08:20");
++  await onayla(`İş emri ${S3.no} onaylandı`, said, S3.onayId);
++  await an(4, "08:30");
++  await yap(`${b(L5, 0)} ve ${b(L5, 1)} bobinlerini OR04 hattına çekti`, ayse, "POST", "/hammadde/cekis", { barkod: b(L5, 0), isEmriNo: S4.no });
++  await istek(ayse, "POST", "/hammadde/cekis", { barkod: b(L5, 1), isEmriNo: S4.no });
++  await an(4, "08:35");
++  await yap("İşi başlattı (OR04, planlanan gün dündü)", ahmet, "POST", `/is-emirleri/${S4.no}/baslat`);
++  await an(4, "08:37");
++  await yap("İki bobini makineye okuttu", ahmet, "POST", `/is-emirleri/${S4.no}/bagla`, { barkod: b(L5, 0) });
++  await istek(ahmet, "POST", `/is-emirleri/${S4.no}/bagla`, { barkod: b(L5, 1) });
++  await an(4, "08:50");
++  await yap("İlk parça uygun (OR04)", berra, "POST", `/is-emirleri/${S4.no}/ilk-parca`, { olcumler: olc(kts, "ILK_PARCA", [9.98, 12.2]), aletKod: "KMP-01" });
++  await an(4, "09:00");
++  await yap(`PA6 çuvalı ${b(L2, 0)} ve masterbatch ${b(L3, 0)} EX01 hattına çekildi`, ayse, "POST", "/hammadde/cekis", { barkod: b(L2, 0), isEmriNo: S3.no });
++  await istek(ayse, "POST", "/hammadde/cekis", { barkod: b(L3, 0), isEmriNo: S3.no });
++  await an(4, "09:10");
++  await yap("İşi başlattı (EX01), iki hammaddeyi okuttu", ahmet, "POST", `/is-emirleri/${S3.no}/baslat`);
++  await istek(ahmet, "POST", `/is-emirleri/${S3.no}/bagla`, { barkod: b(L2, 0) });
++  await istek(ahmet, "POST", `/is-emirleri/${S3.no}/bagla`, { barkod: b(L3, 0) });
++  await an(4, "09:30");
++  await yap("İlk parça uygun (spiral iç çap 12,02, et 0,81 mm)", said, "POST", `/is-emirleri/${S3.no}/ilk-parca`, { olcumler: olc(spiral, "ILK_PARCA", [12.02, 0.81]), aletKod: "MKR-01" });
++  await an(4, "10:30");
++  await yap("Proses ölçümü uygun (OR04)", ahmet, "POST", `/is-emirleri/${S4.no}/proses-olcum`, { olcumler: olc(kts, "PROSES", [10.01, 12.0]), aletKod: "KMP-01" });
++  await an(4, "10:45");
++  const kr1 = await yap("Karantinaya ayırdı: 6 m, örgü sıklığı (H-04)", ahmet, "POST", `/is-emirleri/${S4.no}/karantina`, { hataKodu: "H-04", miktar: 6, not: "Örgü sıklığı 11 tur/cm'e düştü gibi göründü, kalite tekrar ölçsün." });
++  await an(4, "11:00");
++  await yap("Proses ölçümü uygun (EX01)", ahmet, "POST", `/is-emirleri/${S3.no}/proses-olcum`, { olcumler: olc(spiral, "PROSES", [12.05]), aletKod: "MKR-01" });
++  await an(4, "11:20");
++  await yap("Duraklattı (OR04): tahrik kayışı koptu", ahmet, "POST", `/is-emirleri/${S4.no}/duraklat`, { gerekce: "Tahrik kayışı koptu, makine durdu." });
++  await an(4, "11:25");
++  const kr2 = await yap("Karantinaya ayırdı: 5 m, tel kopması (H-05)", ahmet, "POST", `/is-emirleri/${S4.no}/karantina`, { hataKodu: "H-05", miktar: 5, not: "Kayış koptuğu anda teller koptu; makinenin durduğu yerdeki 5 m." });
++  await an(4, "12:10");
++  await yap("Arıza kaydı: OR04, 45 dk", mehmet, "POST", "/kys/bakimlar", {
++    makineId: makine("OR04").id, tur: "ARIZA", tarih: G[4], ariza: "Tahrik kayışı koptu", yapilan: "Kayış değiştirildi, gerginlik ayarlandı, deneme çalıştırması yapıldı", kullanilanParca: "Kayış A-42", durusDk: 45,
++  });
++  await an(4, "12:15");
++  await yap("Devam etti (OR04)", ahmet, "POST", `/is-emirleri/${S4.no}/baslat`);
++  await an(4, "12:20");
++  await yap("Proses ölçümü uygun (OR04, arızadan sonra)", ahmet, "POST", `/is-emirleri/${S4.no}/proses-olcum`, { olcumler: olc(kts, "PROSES", [10.04, 12.1]), aletKod: "KMP-01" });
++  await an(4, "12:40");
++  await yap("Proses ölçümü uygun (EX01)", ahmet, "POST", `/is-emirleri/${S3.no}/proses-olcum`, { olcumler: olc(spiral, "PROSES", [12.03]), aletKod: "MKR-01" });
++  await an(4, "13:20");
++  const T3 = (await yap("Topu bitirdi (EX01): 200 m", ahmet, "POST", `/is-emirleri/${S3.no}/top-bitir`, { metraj: 200 })).lot.no;
++  await an(4, "13:30");
++  const bit3 = await yap("İşi bitirdi (EX01): PA6'dan 16 kg, masterbatch'ten 4,8 kg depoya döndü", ahmet, "POST", `/is-emirleri/${S3.no}/bitir`, {
++    iadeler: [{ barkod: b(L2, 0), kalanMiktar: 16 }, { barkod: b(L3, 0), kalanMiktar: 4.8 }],
++  });
++  kontrol("Hikâye 3: PA6 9 kg / 45 g/m = 200 m, MB 0,2 kg / 1 g/m = 200 m → beklenen 200, üretilen 200", [200, 200, "TAMAMLANDI"], [bit3.denge.beklenenMetraj, bit3.denge.uretilenToplam, bit3.durum]);
++  await an(4, "13:50");
++  const kr3 = await yap("Karantinaya ayırdı: 4 m, çap (H-02)", ahmet, "POST", `/is-emirleri/${S4.no}/karantina`, { hataKodu: "H-02", miktar: 4, not: "Dış çap 10,35 mm, sınırın 0,05 mm üstü." });
++  await an(4, "14:00");
++  await yap("Proses ölçümü uygun (OR04, ayar düzeltildi)", ahmet, "POST", `/is-emirleri/${S4.no}/proses-olcum`, { olcumler: olc(kts, "PROSES", [10.05, 12.0]), aletKod: "KMP-01" });
++  await an(4, "14:30");
++  const kr4 = await yap("Karantinaya ayırdı: 5 m, renk (H-03)", ahmet, "POST", `/is-emirleri/${S4.no}/karantina`, { hataKodu: "H-03", miktar: 5, not: "Renk tonu farklı görünüyor, ışık kabininde bakılsın." });
++  await an(4, "15:10");
++  const T4 = (await yap("Topu bitirdi (OR04): 380 m", ahmet, "POST", `/is-emirleri/${S4.no}/top-bitir`, { metraj: 380 })).lot.no;
++  await an(4, "15:20");
++  const bit4 = await yap(`İşi bitirdi (OR04): ${b(L5, 1)} bobininde kalan 18 kg depoya döndü`, ahmet, "POST", `/is-emirleri/${S4.no}/bitir`, { iadeler: [{ barkod: b(L5, 1), kalanMiktar: 18 }] });
++  kontrol("Hikâye 4: 25 + 7 = 32 kg → beklenen 400 m; üretilen 380 top + 20 karantina = 400 m", [400, 400, "TAMAMLANDI"], [bit4.denge.beklenenMetraj, bit4.denge.uretilenToplam, bit4.durum]);
++  await an(4, "15:40");
++  await yap("Karantina kararı 6 m: olumlu (tekrar ölçüldü)", berra, "POST", `/kalite/karantina/${kr1.karantina.barkod}/karar`, { karar: "OLUMLU", not: "Tekrar ölçüldü: 12,0 tur/cm, uygun. Parça yeni numarayla stoğa girdi." });
++  await an(4, "15:43");
++  await yap("Karantina kararı 4 m: şartlı kabul", berra, "POST", `/kalite/karantina/${kr3.karantina.barkod}/karar`, { karar: "SARTLI_KABUL", not: "Sapma 0,05 mm. Arçelik kalite biriminin yazılı onayıyla kabul edildi." });
++  await an(4, "15:46");
++  await yap("Karantina kararı 5 m: hurda", berra, "POST", `/kalite/karantina/${kr2.karantina.barkod}/karar`, { karar: "HURDA", not: "Kopuk teller onarılamaz." });
++  console.log(`      5 m renk farkı (${kr4.karantina.barkod}) karar bekliyor`);
++  await an(4, "15:50");
++  await yap(`Karar bekleyen parçayı karantina alanına koydu: ${kr4.karantina.barkod}`, ayse, "POST", `/birimler/${kr4.karantina.barkod}/yerlestir`, { yerKodu: "YR-KAR" });
++  await an(4, "16:00");
++  await yap(`Şahit numune aldı: ${T3}`, said, "POST", `/lotlar/${T3}/numune`, { arsivYeri: "YR-NUM-01" });
++  await an(4, "16:10");
++  const k3 = await yap("Kesti (spiral): 50 + 50 + 50 + 49 m", ahmet, "POST", `/lotlar/${T3}/kesim`, { parcalar: [50, 50, 50, 49], olcumler: olc(spiral, "METRAJ", [12.03, 13.6]) });
++  kontrol("Hikâye 3 kesim: 199 = 50 + 50 + 50 + 49", [199, 0], [k3.hesap.topMetre, k3.hesap.fire]);
++  await an(4, "16:20");
++  await yap("Son kontrol: spiral parçaları serbest", said, "POST", "/kalite/son-kontrol", { lotNo: T3, karar: "SERBEST" });
++  await an(4, "16:30");
++  const sv2 = await yap("Sevkiyat hazırladı: Ford, 2 x 100 m (Hikâye 2)", ayse, "POST", "/sevkiyat", { musteriId: FORD.id, urunId: kts.id, siparisNo: "FO-77812", atananId: berra.id });
++  for (const bk of [P(k2, 0), P(k2, 1)]) await istek(ayse, "POST", `/sevkiyat/${sv2.no}/okut`, { barkod: bk });
++  await an(4, "16:40");
++  await onayla(`Sevkiyat ${sv2.no} onaylandı`, berra, sv2.onay.id);
++  await an(4, "16:45");
++  await yap("Sevk etti (IRS-2611-0102)", ayse, "POST", `/sevkiyat/${sv2.no}/onayla`, { irsaliyeNo: "IRS-2611-0102" });
++  await an(4, "16:50");
++  const sv3 = await yap("Sevkiyat hazırladı: Ege Beyaz Eşya, 100 + 99 m (Hikâye 5)", ayse, "POST", "/sevkiyat", { musteriId: EGE.id, urunId: kts.id, siparisNo: "EGE-5521", atananId: said.id });
++  for (const bk of [P(k5, 0), P(k5, 1)]) await istek(ayse, "POST", `/sevkiyat/${sv3.no}/okut`, { barkod: bk });
++  await an(4, "17:00");
++  await onayla(`Sevkiyat ${sv3.no} onaylandı`, said, sv3.onay.id);
++  await an(4, "17:05");
++  await yap("Sevk etti (IRS-2611-0103)", ayse, "POST", `/sevkiyat/${sv3.no}/onayla`, { irsaliyeNo: "IRS-2611-0103" });
++  await yap(`79 m parçayı rafa koydu: ${P(k2, 2)} → YR-D1-R02`, ayse, "POST", `/birimler/${P(k2, 2)}/yerlestir`, { yerKodu: "YR-D1-R02" });
++
++  // =====================================================================================
++  // G3: Hikaye 6 uretimi (OR08), Hikaye 4 kesimi, Siemens sevkiyati, depo isleri
++  // =====================================================================================
++  baslik(`${G[3]}: Hikâye 6 üretimi (OR08), Hikâye 4 kesimi, Siemens sevkiyatı, yeniden kesim`);
++  await an(3, "08:20");
++  const S6 = await isEmri("İş emri açtı: OR08, 250 m, Ford", "OR08", kts, 250, berra, { planlananTarih: G[3], siparisNo: "FO-77840", musteriId: FORD.id });
++  await an(3, "08:30");
++  await onayla(`İş emri ${S6.no} onaylandı`, berra, S6.onayId);
++  await an(3, "08:40");
++  await yap(`${b(L6, 0)} bobinini OR08 hattına çekti`, ayse, "POST", "/hammadde/cekis", { barkod: b(L6, 0), isEmriNo: S6.no });
++  await an(3, "08:45");
++  await yap("İşi başlattı (OR08), bobini okuttu", ahmet, "POST", `/is-emirleri/${S6.no}/baslat`);
++  await istek(ahmet, "POST", `/is-emirleri/${S6.no}/bagla`, { barkod: b(L6, 0) });
++  await an(3, "09:00");
++  await yap("İlk parça uygun (OR08)", said, "POST", `/is-emirleri/${S6.no}/ilk-parca`, { olcumler: olc(kts, "ILK_PARCA", [10.0, 12.0]), aletKod: "KMP-01" });
++  await an(3, "09:10");
++  await yap(`Şahit numune aldı: ${T4}`, berra, "POST", `/lotlar/${T4}/numune`, { arsivYeri: "YR-NUM-01" });
++  await an(3, "09:30");
++  const k4 = await yap("Kesti (OR04 topu): 100 + 100 + 100 + 78 m, 1 m kesim firesi", ahmet, "POST", `/lotlar/${T4}/kesim`, { parcalar: [100, 100, 100, 78], kesimFiresi: 1, olcumler: olc(kts, "METRAJ", [10.02]) });
++  kontrol("Hikâye 4 kesim: 379 = 100 + 100 + 100 + 78 + 1 fire", [379, 1], [k4.hesap.topMetre, k4.hesap.fire]);
++  await an(3, "09:50");
++  await yap("Son kontrol: üç parça serbest", berra, "POST", "/kalite/son-kontrol", { barkodlar: [P(k4, 0), P(k4, 1), P(k4, 2)], karar: "SERBEST" });
++  await an(3, "09:55");
++  await yap("Son kontrol: 78 m parça karantinada", berra, "POST", "/kalite/son-kontrol", { barkodlar: [P(k4, 3)], karar: "KARANTINA", not: "Yüzeyde ezik şüphesi; ikinci kontrol yapılacak." });
++  await an(3, "10:30");
++  await yap("Proses ölçümü uygun (OR08)", ahmet, "POST", `/is-emirleri/${S6.no}/proses-olcum`, { olcumler: olc(kts, "PROSES", [10.03, 12.1]), aletKod: "KMP-01" });
++  await an(3, "12:10");
++  await yap("Proses ölçümü uygun (OR08)", ahmet, "POST", `/is-emirleri/${S6.no}/proses-olcum`, { olcumler: olc(kts, "PROSES", [10.06, 12.0]), aletKod: "KMP-01" });
++  await an(3, "13:30");
++  const T6 = (await yap("Topu bitirdi (OR08): 250 m", ahmet, "POST", `/is-emirleri/${S6.no}/top-bitir`, { metraj: 250 })).lot.no;
++  await an(3, "13:40");
++  const bit6 = await yap("İşi bitirdi (OR08): bobinde kalan 5 kg depoya döndü", ahmet, "POST", `/is-emirleri/${S6.no}/bitir`, { iadeler: [{ barkod: b(L6, 0), kalanMiktar: 5 }] });
++  kontrol("Hikâye 6: 25 − 5 = 20 kg → beklenen 250 m, üretilen 250 m", [250, 250, "TAMAMLANDI"], [bit6.denge.beklenenMetraj, bit6.denge.uretilenToplam, bit6.durum]);
++  await an(3, "14:00");
++  const sv4 = await yap("Sevkiyat hazırladı: Siemens, 4 spiral parça 199 m (Hikâye 3)", ayse, "POST", "/sevkiyat", { musteriId: SIE.id, urunId: spiral.id, siparisNo: "SIE-4410", atananId: said.id });
++  for (const i of [0, 1, 2, 3]) await istek(ayse, "POST", `/sevkiyat/${sv4.no}/okut`, { barkod: P(k3, i) });
++  await an(3, "14:10");
++  await onayla(`Sevkiyat ${sv4.no} onaylandı`, said, sv4.onay.id);
++  await an(3, "14:20");
++  await yap("Sevk etti (IRS-2611-0104)", ayse, "POST", `/sevkiyat/${sv4.no}/onayla`, { irsaliyeNo: "IRS-2611-0104" });
++  await an(3, "14:40");
++  await yap(`Şahit numune aldı: ${T6}`, said, "POST", `/lotlar/${T6}/numune`, { arsivYeri: "YR-NUM-01" });
++  await an(3, "15:00");
++  const k6 = await yap("Kesti (OR08 topu): 100 + 100 + 49 m", ahmet, "POST", `/lotlar/${T6}/kesim`, { parcalar: [100, 100, 49], olcumler: olc(kts, "METRAJ", [10.05]) });
++  await an(3, "15:15");
++  await yap("Son kontrol: OR08 parçaları serbest", said, "POST", "/kalite/son-kontrol", { lotNo: T6, karar: "SERBEST" });
++  await an(3, "15:40");
++  await yap("OR08 parçalarını rafa koydu (YR-D1-R01)", ayse, "POST", `/birimler/${P(k6, 1)}/yerlestir`, { yerKodu: "YR-D1-R01" });
++  await istek(ayse, "POST", `/birimler/${P(k6, 2)}/yerlestir`, { yerKodu: "YR-D1-R01" });
++  await an(3, "16:00");
++  const bol = await yap(`Yeniden kesim: ${P(k1, 2)} (99 m) → 50 + 49 m`, ayse, "POST", `/lotlar/birim/${P(k1, 2)}/bol`, { parcalar: [50, 49] });
++  await an(3, "16:10");
++  await yap(`Etiketi yeniden bastı: ${bol.yeniler[0].barkod}`, ayse, "POST", `/birimler/${bol.yeniler[0].barkod}/etiket`, { neden: "Etiket forkliftle yırtıldı." });
++
++  // =====================================================================================
++  // G2: Hikaye 6 sevkiyati, Hikaye 5 sikayet + iade + DOF, haksiz sikayet
++  // =====================================================================================
++  baslik(`${G[2]}: Ford sevkiyatı (Hikâye 6), Ege şikâyeti ve iade (Hikâye 5)`);
++  await an(2, "09:00");
++  const sv5 = await yap("Sevkiyat hazırladı: Ford, 1 x 100 m (Hikâye 6)", ayse, "POST", "/sevkiyat", { musteriId: FORD.id, urunId: kts.id, siparisNo: "FO-77840", atananId: berra.id });
++  await istek(ayse, "POST", `/sevkiyat/${sv5.no}/okut`, { barkod: P(k6, 0) });
++  await an(2, "09:10");
++  await onayla(`Sevkiyat ${sv5.no} onaylandı`, berra, sv5.onay.id);
++  await an(2, "09:20");
++  await yap("Sevk etti (IRS-2611-0105)", ayse, "POST", `/sevkiyat/${sv5.no}/onayla`, { irsaliyeNo: "IRS-2611-0105" });
++  await an(2, "10:00");
++  const sk1 = await yap("Şikâyet açtı: Ege, çap ölçüsü", berra, "POST", "/kys/sikayetler", {
++    musteriId: EGE.id, sevkiyatNo: sv3.no, lotNo: T5, konu: "Çap ölçüsü tolerans dışı",
++    aciklama: `Ege giriş kontrolünde ${P(k5, 0)} numaralı makarada dış çap 10,4 mm ölçülmüş (sınır 10,3 mm).`,
++  });
++  await an(2, "10:20");
++  await yap(`Müşteri iadesini aldı: ${P(k5, 0)} (100 m) → kendiliğinden karantinaya düştü`, ayse, "POST", "/kalite/musteri-iadesi", { sikayetNo: sk1.no, barkodlar: [P(k5, 0)], neden: "Çap sapması; müşteri makarayı geri gönderdi." });
++  await an(2, "10:40");
++  const dof1 = (await yap("DÖF açtı (sorumlu Mehmet)", berra, "POST", `/kys/sikayetler/${sk1.no}/dof`, { sorumluId: mehmet.id, termin: gunEkle(G[2], 10) })).dof.no;
++  await an(2, "11:30");
++  await yap("Kök nedeni ve faaliyeti yazdı", mehmet, "POST", `/kys/doflar/${dof1}/kok-neden`, {
++    kokNeden: "OR06 çekme makarası aşınmış; makara yüzeyi teli sıkıştırıp çapı büyütüyor. Proses ölçümlerinde çap 10,22 → 10,26 mm diye yükselmişti, sınıra yaklaşıyordu.",
++    faaliyet: "Makara değiştirildi. OR06 için proses ölçüm aralığı 60 dakikaya indirildi. Diğer örgü makinelerinin makaraları kontrol edildi.",
++  });
++  await an(2, "14:00");
++  const sk3 = await yap("Şikâyet açtı: Arçelik, teslimat gecikmesi", berra, "POST", "/kys/sikayetler", { musteriId: ARC.id, konu: "Teslimat geç geldi", aciklama: "Müşteri sevkiyatın bir gün geç geldiğini bildirdi." });
++  await an(2, "14:30");
++  await yap("Şikâyeti haksız bularak kapattı", berra, "POST", `/kys/sikayetler/${sk3.no}/kapat`, { kapanisNotu: "Teslimat siparişteki tarihte yapılmış; irsaliye ve kargo teslim kaydı müşteriye iletildi.", hakli: false });
++
++  // =====================================================================================
++  // G1: geri cagirma (Hikaye 6), kalibrasyon, depo isleri (Hikaye 7), ertesi gunun is emirleri
++  // =====================================================================================
++  baslik(`${G[1]}: geri çağırma (Hikâye 6), depo işleri (Hikâye 7), kalibrasyon`);
++  await an(1, "08:30");
++  const S11 = await isEmri("İş emri açtı: OR11, 150 m, Arçelik", "OR11", kts, 150, berra, { planlananTarih: G[0], siparisNo: "ARC-2611-040", musteriId: ARC.id });
++  await an(1, "08:40");
++  await yap(`İş emri ${S11.no} iptal edildi (silinmez, gerekçesiyle durur)`, mehmet, "POST", `/is-emirleri/${S11.no}/iptal`, { gerekce: "Müşteri siparişi bir sonraki aya erteledi." });
++  await an(1, "09:00");
++  const cekis = await yap(`${b(L5, 3)} bobininden 10 kg OR10 hattına çekti (bobin bölündü, yeni etiket)`, ayse, "POST", "/hammadde/cekis", { barkod: b(L5, 3), miktar: 10, makineKodu: "OR10" });
++  const parcaBobin = cekis.birim.barkod;
++  await an(1, "09:30");
++  await yap("Arıza kaydı: OR03, 20 dk", mehmet, "POST", "/kys/bakimlar", { makineId: makine("OR03").id, tur: "ARIZA", tarih: G[1], ariza: "Tel kopma sensörü çalışmıyor", yapilan: "Sensör konnektörü temizlendi, kablo yenilendi", durusDk: 20 });
++  await an(1, "10:00");
++  const ileri = await istek(berra, "GET", `/izlenebilirlik/${L6.lot.no}?yon=ileri`);
++  const depodakiler = ileri.dugumler.filter((x) => x.tur === "FG" && ["SERBEST", "DEPODA"].includes(x.durum) && !x.bloke).map((x) => x.barkod);
++  const musteride = ileri.dugumler.filter((x) => x.tur === "FG" && x.durum === "SEVK_EDILDI").map((x) => x.barkod);
++  kontrol("Geri çağırma: TF-2611-233'ten yapılan parçalar (depoda / müşteride)", [[P(k6, 1), P(k6, 2)].sort(), [P(k6, 0)]], [depodakiler.sort(), musteride]);
++  const bl = await yap(`Depodaki ${depodakiler.length} parçayı bloke etti`, berra, "POST", "/kalite/bloke", {
++    barkodlar: depodakiler, neden: "Teknofil, TF-2611-233 partisinde lif çapı sapması olabileceğini bildirdi. İnceleme bitene kadar kullanılmayacak. Ford'a giden 100 m makara için müşteri bilgilendirildi.",
++  });
++  await an(1, "10:10");
++  await yap(`Partinin depoda kalan bobinlerini karantinaya aldı: ${L6.lot.no}`, berra, "POST", `/hammadde/lotlar/${L6.lot.no}/kontrol`, { karar: "KARANTINA", not: "Tedarikçi uyarısı (lif çapı). İnceleme sürüyor; üretime çekilmeyecek." });
++  await an(1, "10:30");
++  await yap("Kalibrasyon: SM-01 uygun değil → kullanım dışı", said, "POST", "/kys/aletler/SM-01/kalibrasyon", { tarih: G[1], sonuc: "UYGUN_DEGIL", aciklama: "5 m'de 3 mm sapma. Alet kullanım dışı bırakıldı, yenisi sipariş edildi.", yapan: "İç kalibrasyon (referans metreye karşı)" });
++  await an(1, "11:00");
++  await yap("İç denetim DÖF'ü açtı (sorumlu Mehmet)", berra, "POST", "/kys/doflar", {
++    kaynak: "IC_DENETIM", problem: "Metraj alanında kalibrasyon etiketi olmayan şerit metre (SM-01) kullanılıyor.", sorumluId: mehmet.id, termin: gunEkle(G[1], 14),
++  });
++  await an(1, "11:30");
++  await yap(`Hattan iade: ${parcaBobin} (10 kg) OR10'da kullanılmadan depoya döndü`, ayse, "POST", "/hammadde/iade", { barkod: parcaBobin, depoYeri: "YR-D1-R02" });
++  await an(1, "13:00");
++  await yap(`Doğrudan hurda: ${b(L5, 3)} bobininden 2 kg`, berra, "POST", "/kalite/hurda", { barkod: b(L5, 3), miktar: 2, neden: "Ambalaj yırtılmış, bobinin dış katları nem almış." });
++  await an(1, "14:00");
++  await yap("DÖF'ü tamamladı", mehmet, "POST", `/kys/doflar/${dof1}/tamamla`, { not: "Makara değiştirildi; iki gündür OR06'da 60 dakikada bir ölçülüyor, çap 10,0-10,1 mm." });
++  await an(1, "14:30");
++  await yap(`İade parçaya karar: RET (${P(k5, 0)})`, said, "POST", "/kalite/son-kontrol", { barkodlar: [P(k5, 0)], karar: "RET", not: "Çap sapması doğrulandı (10,4 mm). Parça hurdaya ayrıldı." });
++  await an(1, "16:00");
++  const S8a = await isEmri("İş emri açtı: OR02, 600 m, Arçelik (yarın)", "OR02", kts, 600, berra, { planlananTarih: G[0], siparisNo: "ARC-2611-036", musteriId: ARC.id });
++  await an(1, "16:05");
++  const S8b = await isEmri("İş emri açtı: OR05, 500 m, Ford (yarın)", "OR05", kts, 500, said, { planlananTarih: G[0], siparisNo: "FO-77851", musteriId: FORD.id });
++  await an(1, "16:10");
++  const S8c = await isEmri("İş emri açtı: OR07, 250 m, Ege (yarın)", "OR07", kts, 250, berra, { planlananTarih: G[0], siparisNo: "EGE-5530", musteriId: EGE.id });
++  await an(1, "16:20");
++  await onayla(`İş emri ${S8a.no} onaylandı`, berra, S8a.onayId);
++  await an(1, "16:22");
++  await onayla(`İş emri ${S8c.no} onaylandı`, berra, S8c.onayId);
++  await an(1, "16:30");
++  await onayla(`İş emri ${S8b.no} onaylandı`, said, S8b.onayId);
++
++  // =====================================================================================
++  // G0 (bugun): Hikaye 8, bekleyen onaylar, DOF dogrulama, tedarikci degerlendirme
++  // =====================================================================================
++  baslik(`${G[0]} (bugün): Hikâye 8, bekleyen onaylar`);
++  await an("bugun", 0);
++  await yap(`${b(L1, 3)} ve ${b(L5, 1)} bobinlerini OR02 hattına çekti`, ayse, "POST", "/hammadde/cekis", { barkod: b(L1, 3), isEmriNo: S8a.no });
++  await istek(ayse, "POST", "/hammadde/cekis", { barkod: b(L5, 1), isEmriNo: S8a.no });
++  await an("bugun", 5);
++  await yap("İşi başlattı (OR02), iki bobini okuttu", ahmet, "POST", `/is-emirleri/${S8a.no}/baslat`);
++  await istek(ahmet, "POST", `/is-emirleri/${S8a.no}/bagla`, { barkod: b(L1, 3) });
++  await istek(ahmet, "POST", `/is-emirleri/${S8a.no}/bagla`, { barkod: b(L5, 1) });
++  await an("bugun", 20);
++  await yap("İlk parça uygun (OR02)", berra, "POST", `/is-emirleri/${S8a.no}/ilk-parca`, { olcumler: olc(kts, "ILK_PARCA", [10.03, 12.0]), aletKod: "KMP-01" });
++  await an("bugun", 30);
++  await yap(`${b(L5, 3)} bobinini (13 kg) OR05 hattına çekti`, ayse, "POST", "/hammadde/cekis", { barkod: b(L5, 3), isEmriNo: S8b.no });
++  await an("bugun", 35);
++  await yap("İşi başlattı (OR05), bobini okuttu", ahmet, "POST", `/is-emirleri/${S8b.no}/baslat`);
++  await istek(ahmet, "POST", `/is-emirleri/${S8b.no}/bagla`, { barkod: b(L5, 3) });
++  await an("bugun", 50);
++  await yap("İlk parça uygun (OR05)", said, "POST", `/is-emirleri/${S8b.no}/ilk-parca`, { olcumler: olc(kts, "ILK_PARCA", [10.08, 12.1]), aletKod: "KMP-01" });
++  await an("bugun", 110);
++  await yap("Proses ölçümü uygun (OR02)", ahmet, "POST", `/is-emirleri/${S8a.no}/proses-olcum`, { olcumler: olc(kts, "PROSES", [10.02, 12.1]), aletKod: "KMP-01" });
++  await an("bugun", 150);
++  const pr8 = await yap("Proses ölçümü (OR05): dış çap 10,5 mm, sınır 10,3 → iş kendiliğinden durdu", ahmet, "POST", `/is-emirleri/${S8b.no}/proses-olcum`, { olcumler: olc(kts, "PROSES", [10.5, 12.0]), aletKod: "KMP-01" });
++  kontrol("Hikâye 8: sınır dışı ölçümden sonra OR05 durumu", "DURAKLATILDI", pr8.durum);
++  await an("bugun", 155);
++  const kr8 = await yap("Şüpheli kısmı karantinaya ayırdı: 6 m (H-02)", ahmet, "POST", `/is-emirleri/${S8b.no}/karantina`, { hataKodu: "H-02", miktar: 6, not: "Son uygun ölçümden bu yana üretilen kısım; çap 10,5 mm." });
++  await an("bugun", 170);
++  await yap(`${b(L1, 2)} bobinini OR07 hattına çekti`, ayse, "POST", "/hammadde/cekis", { barkod: b(L1, 2), isEmriNo: S8c.no });
++  await an("bugun", 175);
++  await yap("İşi başlattı (OR07), bobini okuttu → ilk parça bekleniyor", ahmet, "POST", `/is-emirleri/${S8c.no}/baslat`);
++  await istek(ahmet, "POST", `/is-emirleri/${S8c.no}/bagla`, { barkod: b(L1, 2) });
++  await an("bugun", 190);
++  await yap("Proses ölçümü uygun (OR02)", ahmet, "POST", `/is-emirleri/${S8a.no}/proses-olcum`, { olcumler: olc(kts, "PROSES", [10.04, 12.0]), aletKod: "KMP-01" });
++  await an("bugun", 200);
++  const T8 = (await yap("Topu bitirdi (OR02): 200 m, iş sürüyor", ahmet, "POST", `/is-emirleri/${S8a.no}/top-bitir`, { metraj: 200 })).lot.no;
++  await an("bugun", 215);
++  await yap(`Şahit numune aldı: ${T8}`, berra, "POST", `/lotlar/${T8}/numune`, { arsivYeri: "YR-NUM-01" });
++  await an("bugun", 230);
++  const k8 = await yap("Kesti (OR02 topu): 100 + 99 m → son kontrol bekliyor", ahmet, "POST", `/lotlar/${T8}/kesim`, { parcalar: [100, 99], olcumler: olc(kts, "METRAJ", [10.03]) });
++  await an("bugun", 240);
++  const L8 = await kabul("Mal kabul: PET 2 x 25 kg, Teknofil TF-2611-262 (kontrol bekliyor)", "PET-025", "Teknofil", "TF-2611-262", [25, 25], "YR-D1-R01", said, "İrsaliye 4560. CoA geldi.");
++  await an("bugun", 250);
++  const sv6 = await yap("Sevkiyat hazırladı: Arçelik, 3 x 100 m (Hikâye 4) → onay bekliyor", ayse, "POST", "/sevkiyat", { musteriId: ARC.id, urunId: kts.id, siparisNo: "ARC-2611-034", atananId: berra.id });
++  for (const i of [0, 1, 2]) await istek(ayse, "POST", `/sevkiyat/${sv6.no}/okut`, { barkod: P(k4, i) });
++  await an("bugun", 260);
++  const S9 = await isEmri(`İş emri açtı: OR09, 800 m, Arçelik (${YARIN}) → onay bekliyor`, "OR09", kts, 800, berra, { planlananTarih: YARIN, siparisNo: "ARC-2611-041", musteriId: ARC.id });
++  await an("bugun", 270);
++  await yap("DÖF etkinliğini doğruladı → DÖF kapandı", berra, "POST", `/kys/doflar/${dof1}/dogrula`, { etkili: true, etkinlikNotu: "İki gün boyunca OR06 ölçümlerinde sapma görülmedi (10,0-10,1 mm)." });
++  await an("bugun", 275);
++  await yap("Ege şikâyetini kapattı", berra, "POST", `/kys/sikayetler/${sk1.no}/kapat`, { kapanisNotu: "DÖF etkili bulundu; iade edilen 100 m makara hurdaya ayrıldı. Müşteriye bilgi verildi." });
++  await an("bugun", 285);
++  const ay = Number(G[0].slice(5, 7));
++  const donem = `${G[0].slice(0, 4)}-Q${Math.ceil(ay / 3)}`;
++  for (const [bas, teslimat, belge, aciklama] of [
++    ["Teknofil", 95, 90, "Teslimatlar zamanında, sertifikalar eksiksiz. TF-2611-233 uyarısını kendisi bildirdi."],
++    ["Anka", 80, 70, "AP-PET-033 partisi çap uygunsuzluğu nedeniyle reddedildi."],
++    ["Renkpol", 85, 80, "Tek teslimat, sorunsuz."],
++  ]) {
++    const ted = tedarikci(bas);
++    const on = await istek(berra, "GET", `/kys/tedarikci-degerlendirme/onizleme?tedarikciId=${ted.id}&donem=${donem}`);
++    const r = await yap(`Tedarikçi değerlendirme ${ted.unvan}: kalite ${on.kalitePuani} (${on.kabulLot}/${on.lotSayisi} lot), teslimat ${teslimat}, belge ${belge}`, berra, "POST", "/kys/tedarikci-degerlendirme", {
++      tedarikciId: ted.id, donem, teslimatPuani: teslimat, belgePuani: belge, aciklama,
++    });
++    console.log(`      toplam ${r.hesap.toplam} → ${r.hesap.sonuc}`);
++  }
++
++  // Ornek numaralar (Surec Akislari sayfasindaki "Demoda gormek icin" baglantilari ve sunum)
++  const ornekler = {
++    anaAkis: P(k1, 0),
++    hammaddeRet: L4.lot.no,
++    ariza: "/makineler",
++    proses: "/makineler",
++    karantina: T4,
++    iade: P(k5, 0),
++    geriCagirma: L6.lot.no,
++    kalibrasyon: "/kys",
++  };
++  const ozet = {
++    gunler: [...G].reverse(),
++    hikayeler: {
++      "1 Sorunsuz iş (OR01, Arçelik)": { isEmri: S1.no, top: T1, parcalar: k1.birimler.map((x) => x.barkod), yenidenKesim: bol.yeniler.map((x) => x.barkod), sevkiyat: sv1.no },
++      "2 İlk parça reddi ve malzeme farkı (OR03, Ford)": { isEmri: S2.no, top: T2, sevkiyat: sv2.no },
++      "3 Spiral, iki hammadde (EX01, Siemens)": { isEmri: S3.no, top: T3, sevkiyat: sv4.no },
++      "4 Arıza ve dört karantina (OR04, Arçelik)": { isEmri: S4.no, top: T4, karantinalar: [kr1, kr2, kr3, kr4].map((x) => x.karantina.barkod), bekleyenSevkiyat: sv6.no },
++      "5 Şikâyet, iade, DÖF (OR06, Ege)": { isEmri: S5.no, top: T5, iadeParca: P(k5, 0), sikayet: sk1.no, dof: dof1 },
++      "6 Geri çağırma (OR08, Teknofil TF-2611-233)": { isEmri: S6.no, top: T6, hammaddeLotu: L6.lot.no, bloke: bl.blokeEdilen },
++      "7 Depo: bölme, hattan iade, hurda": { bobin: b(L5, 3), bolunenParca: parcaBobin },
++      "8 Bugün (OR02 / OR05 / OR07)": { calisan: S8a.no, duran: S8b.no, ilkParcaBekleyen: S8c.no, karantina: kr8.karantina.barkod, sonKontrolBekleyen: k8.birimler.map((x) => x.barkod) },
++    },
++    onayBekleyenler: { hammadde: L8.lot.no, isEmri: S9.no, sevkiyat: sv6.no },
++    reddedilenHammadde: L4.lot.no,
++  };
++  return { yuklendi: true, ornekler, ozet, berra, mehmet };
++}
++
++// ---------------------------------------------------------------------------
++// ZAMAN KAYDIRMA: her kaydin zamani, kaydedildigi adimin sanal saatine tasinir.
++//   yeni = sanal(adim) + (gercek - gercek(adim))   [adim: kaydin oncesindeki en son nokta]
++// Tek islemde (transaction) yapilir; bir hata olursa hicbir sey degismez.
++// Yalnizca eklemeye acik tablolarin korumalari (trigger) islem suresince kapatilir, sonunda geri acilir.
++// ---------------------------------------------------------------------------
++const ISO = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:?\d{2})/g;
++
++async function zamanKaydir() {
++  const noktalar = NOKTALAR.map((n) => ({ g: new Date(n.g).getTime(), gMetin: n.g, s: n.s.getTime() }));
++  const ilk = noktalar[0].g;
++  const c = await pool.connect();
++  try {
++    await c.query("BEGIN");
++    const son = (await c.query(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS g`)).rows[0].g;
++    const sonMs = new Date(son).getTime();
++    const esle = (ms) => {
++      if (ms < ilk || ms > sonMs) return null;
++      let n = noktalar[0];
++      for (const x of noktalar) if (x.g <= ms) n = x;
++      return n.s + (ms - n.g);
++    };
++    await c.query("CREATE TEMP TABLE demo_nokta (g timestamptz, s timestamptz) ON COMMIT DROP");
++    await c.query("INSERT INTO demo_nokta SELECT unnest($1::timestamptz[]), unnest($2::timestamptz[])", [
++      noktalar.map((n) => n.gMetin), noktalar.map((n) => new Date(n.s).toISOString()),
++    ]);
++    const tablolar = (await c.query(
++      `SELECT DISTINCT c.relname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
++        WHERE n.nspname = 'public' AND NOT t.tgisinternal`,
++    )).rows.map((x) => x.relname);
++    for (const tb of tablolar) await c.query(`ALTER TABLE public."${tb}" DISABLE TRIGGER USER`);
++
++    // 1) zaman sutunlari
++    const sutunlar = (await c.query(
++      `SELECT table_name, column_name FROM information_schema.columns
++        WHERE table_schema = 'public' AND data_type = 'timestamp with time zone' AND table_name <> '_migration'
++          AND table_name IN (SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE')`,
++    )).rows;
++    let satir = 0;
++    for (const { table_name: tb, column_name: sut } of sutunlar) {
++      const r = await c.query(
++        `UPDATE public."${tb}" x SET "${sut}" = date_trunc('milliseconds',
++            (SELECT n.s + (x."${sut}" - n.g) FROM demo_nokta n WHERE n.g <= x."${sut}" ORDER BY n.g DESC LIMIT 1))
++          WHERE x."${sut}" >= $1::timestamptz AND x."${sut}" <= $2::timestamptz`,
++        [noktalar[0].gMetin, son],
++      );
++      satir += r.rowCount;
++    }
++    // 2) JSON icindeki zamanlar (ornek: topun baslangic saati, karantina karar saati) ve degisiklik izindeki metinler
++    const metinSutunlari = (await c.query(
++      `SELECT table_name, column_name, data_type FROM information_schema.columns
++        WHERE table_schema = 'public' AND table_name <> '_migration'
++          AND (data_type = 'jsonb' OR (table_name = 'degisiklik_izi' AND column_name IN ('eski_deger','yeni_deger','gerekce')))
++          AND table_name IN (SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE')`,
++    )).rows;
++    let metin = 0;
++    for (const { table_name: tb, column_name: sut, data_type: tur } of metinSutunlari) {
++      const rows = (await c.query(`SELECT ctid::text AS k, "${sut}"::text AS v FROM public."${tb}" WHERE "${sut}"::text ~ '\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}'`)).rows;
++      for (const r of rows) {
++        const yeni = r.v.replace(ISO, (m) => {
++          const ms = new Date(m).getTime();
++          const y = Number.isNaN(ms) ? null : esle(ms);
++          return y === null ? m : new Date(y).toISOString();
++        });
++        if (yeni !== r.v) {
++          await c.query(`UPDATE public."${tb}" SET "${sut}" = $1::${tur === "jsonb" ? "jsonb" : "text"} WHERE ctid = $2::tid`, [yeni, r.k]);
++          metin++;
++        }
++      }
++    }
++    // 3) degisiklik izi zincirini yeniden hesapla (zaman ve metinler degisti)
++    const iz = (await c.query("SELECT * FROM degisiklik_izi ORDER BY firma_id, id")).rows;
++    const ids = [];
++    const oncekiler = [];
++    const ozetler = [];
++    let firma = null;
++    let onceki = "BASLANGIC";
++    for (const x of iz) {
++      if (x.firma_id !== firma) {
++        firma = x.firma_id;
++        onceki = "BASLANGIC";
++      }
++      const ozet = crypto
++        .createHash("sha256")
++        .update([onceki, x.firma_id, x.tablo, x.kayit_id, x.alan, x.eski_deger, x.yeni_deger, x.islem, x.kullanici_id, x.zaman.toISOString(), x.gerekce].join("|"))
++        .digest("hex");
++      ids.push(String(x.id));
++      oncekiler.push(onceki);
++      ozetler.push(ozet);
++      onceki = ozet;
++    }
++    if (ids.length) {
++      await c.query(
++        `UPDATE degisiklik_izi d SET onceki_ozet = v.o, ozet = v.z
++           FROM (SELECT unnest($1::bigint[]) AS id, unnest($2::text[]) AS o, unnest($3::text[]) AS z) v WHERE d.id = v.id`,
++        [ids, oncekiler, ozetler],
++      );
++    }
++    for (const tb of tablolar) await c.query(`ALTER TABLE public."${tb}" ENABLE TRIGGER USER`);
++    await c.query("COMMIT");
++    console.log(`\nZaman kaydirma: ${satir} zaman alani, ${metin} metin/JSON alani, ${ids.length} iz satiri yeniden muhurlendi.`);
++  } catch (e) {
++    await c.query("ROLLBACK").catch(() => {});
++    throw e;
++  } finally {
++    c.release();
++  }
++}
++
++async function calistir() {
++  const r = await main();
++  if (!r.yuklendi) return r;
++  await zamanKaydir();
++  await pool.query(`UPDATE firma SET ayarlar = ayarlar || jsonb_build_object('demo', $1::jsonb)`, [
++    JSON.stringify({ yuklendi: new Date().toISOString(), surum: 2, ornekler: r.ornekler }),
++  ]);
++
++  // ---------------- Son kontrol: denge, zincir, KPI ----------------
++  const lotlar = await istek(r.mehmet, "GET", "/lotlar");
++  const bozuk = lotlar.filter((x) => !x.denge.tutuyor).map((x) => x.no);
++  kontrol("Bütün üretim lotlarında miktar dengesi tutuyor (giriş = dağılım)", [], bozuk);
++  const iz = await istek(r.berra, "GET", "/panel/iz-dogrula");
++  kontrol("Değişiklik izi zinciri sağlam", true, iz.saglam);
++  const zamanlar = (await sql(
++    `SELECT min(zaman) AS ilk, max(zaman) AS son, count(*) FILTER (WHERE zaman > now()) AS gelecek FROM olay`,
++  ))[0];
++  kontrol("Gelecek tarihli olay yok", 0, Number(zamanlar.gelecek));
++  const kpi = await istek(r.mehmet, "GET", "/panel/kpi");
++  console.log("\nKPI (son 30 gun):");
++  for (const g of kpi.gostergeler) console.log(`  ${g.baslik}: ${g.deger ?? "-"} ${g.birim}  (${g.pay} / ${g.payda})`);
++
++  const hatali = KONTROLLER.filter((x) => !x.ok);
++  console.log(`\nMatematik kontrolleri: ${KONTROLLER.length - hatali.length} / ${KONTROLLER.length} dogru`);
++  console.log("\nOrnek numaralar:");
++  console.log(JSON.stringify(r.ozet, null, 2));
++  if (hatali.length) throw new Error(`${hatali.length} kontrol tutmadi: ${hatali.map((x) => x.ad).join("; ")}`);
++  console.log("\n================ DEMO VERISI YUKLENDI ================");
++  return r;
++}
++
++module.exports = { calistir };
++
++if (require.main === module) {
++  calistir()
++    .then(() => pool.end())
++    .catch(async (e) => {
++      console.error(`\nHATA: ${e.message}\nBu ekrani oldugu gibi gonderin.`);
++      await pool.end().catch(() => {});
++      process.exit(1);
++    });
++}
+diff --git a/backend/src/db/migrate.js b/backend/src/db/migrate.js
+index f5fbc3e7..fdbc486e 100644
+--- a/backend/src/db/migrate.js
++++ b/backend/src/db/migrate.js
+@@ -78,7 +78,11 @@ async function main() {
+   }
+ }
+ 
+-main().catch((err) => {
+-  console.error("\n[MIGRATION HATASI]", err.message);
+-  process.exit(1);
+-});
++if (require.main === module) {
++  main().catch((err) => {
++    console.error("\n[MIGRATION HATASI]", err.message);
++    process.exit(1);
++  });
++}
++
++module.exports = { sifirlaSema };
+diff --git a/backend/src/db/seed.js b/backend/src/db/seed.js
+index fe874a24..487d375c 100644
+--- a/backend/src/db/seed.js
++++ b/backend/src/db/seed.js
+@@ -32,6 +32,8 @@ const KULLANICILAR = [
+   { kullaniciAdi: "mehmet", adSoyad: "Mehmet Demir", sifre: "Mehmet.1234", sicil: "1002", pin: "2222", roller: ["SEF"] },
+   { kullaniciAdi: "ayse", adSoyad: "Ayşe Kaya", sifre: "Ayse.1234", sicil: "1003", pin: "3333", roller: ["DEPO"] },
+   { kullaniciAdi: "ahmet", adSoyad: "Ahmet Yılmaz", sifre: "Ahmet.1234", sicil: "1215", pin: "1234", roller: ["OPERATOR"] },
++  // Ikinci kalite yetkilisi: dort goz kurali geregi Berra'nin girdigi kaydi onaylayacak biri olmali
++  { kullaniciAdi: "said", adSoyad: "Said Kalite", sifre: "Said.1234", sicil: "1004", pin: "4444", roller: ["KALITE"] },
+   { kullaniciAdi: "denetci", adSoyad: "Dış Denetçi", sifre: "Denetci.1234", roller: ["DENETCI"] },
+ ];
+ 
+@@ -95,26 +97,26 @@ async function main() {
+       const kod = `OR${String(i).padStart(2, "0")}`;
+       const sira = i <= 8 ? 0 : 1;
+       const x = 6 + ((i - 1) % 8) * 9;
+-      makineler.push([kod, `Orgu makinesi ${i}`, "ORGU", x, sira ? 62 : 22]);
++      makineler.push([kod, `Örgü makinesi ${i}`, "ORGU", x, sira ? 62 : 22]);
+     }
+-    makineler.push(["MS01", "Masura sarim", "MASURA", 84, 22], ["EX01", "Ekstruder 1", "EKSTRUZYON", 84, 62], ["MT01", "Metraj ve kesim", "METRAJ", 94, 42]);
++    makineler.push(["MS01", "Masura sarım", "MASURA", 84, 22], ["EX01", "Ekstrüder 1", "EKSTRUZYON", 84, 62], ["MT01", "Metraj ve kesim", "METRAJ", 94, 42]);
+     for (const [kod, ad, tip, x, y] of makineler) {
+       await c.query("INSERT INTO makine (firma_id, kod, ad, tip, plan_x, plan_y) VALUES ($1,$2,$3,$4,$5,$6)", [F, kod, ad, tip, x, y]);
+     }
+ 
+     const pet = await ekle("INSERT INTO malzeme (firma_id, kod, ad) VALUES ($1,'PET-025','PET monofilament 0,25 mm') RETURNING id", [F]);
+-    const pa6 = await ekle("INSERT INTO malzeme (firma_id, kod, ad) VALUES ($1,'PA6-GR','PA6 granul') RETURNING id", [F]);
++    const pa6 = await ekle("INSERT INTO malzeme (firma_id, kod, ad) VALUES ($1,'PA6-GR','PA6 granül') RETURNING id", [F]);
+     const mb = await ekle("INSERT INTO malzeme (firma_id, kod, ad) VALUES ($1,'MB-SYH','Siyah masterbatch') RETURNING id", [F]);
+ 
+     for (const unvan of ["Teknofil Lif", "Anka Polimer", "Renkpol Kimya"]) {
+       await c.query("INSERT INTO tedarikci (firma_id, unvan) VALUES ($1,$2)", [F, unvan]);
+     }
+-    for (const unvan of ["Ege Beyaz Esya A.S.", "Siemens Sanayi ve Ticaret A.S.", "Ford Otosan", "Arcelik A.S."]) {
++    for (const unvan of ["Ege Beyaz Eşya A.Ş.", "Siemens Sanayi ve Ticaret A.Ş.", "Ford Otosan", "Arçelik A.Ş."]) {
+       await c.query("INSERT INTO musteri (firma_id, unvan) VALUES ($1,$2)", [F, unvan]);
+     }
+ 
+     const kts = await ekle(
+-      "INSERT INTO urun (firma_id, kod, ad, kesim_boyu, numune_boyu) VALUES ($1,'KTS-PET-010','Kablo toplama corabi 10 mm PET',100,1) RETURNING id",
++      "INSERT INTO urun (firma_id, kod, ad, kesim_boyu, numune_boyu) VALUES ($1,'KTS-PET-010','Kablo toplama çorabı 10 mm PET',100,1) RETURNING id",
+       [F],
+     );
+     const ps = await ekle(
+@@ -132,27 +134,27 @@ async function main() {
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+         [F, urun, asama, ad, nominal, alt, ust, birim, sira],
+       );
+-    await kar(kts.id, "ILK_PARCA", "Dis cap", 10, 9.7, 10.3, "mm", 1);
+-    await kar(kts.id, "ILK_PARCA", "Orgu sikligi", 12, 11, 13, "tur/cm", 2);
+-    await kar(kts.id, "METRAJ", "Dis cap", 10, 9.7, 10.3, "mm", 1);
+-    await kar(ps.id, "ILK_PARCA", "Ic cap", 12, 11.8, 12.2, "mm", 1);
+-    await kar(ps.id, "ILK_PARCA", "Et kalinligi", 0.8, 0.7, 0.9, "mm", 2);
+-    await kar(ps.id, "METRAJ", "Ic cap", 12, 11.8, 12.2, "mm", 1);
+-    await kar(ps.id, "METRAJ", "Dis cap", 13.6, 13.3, 13.9, "mm", 2);
++    await kar(kts.id, "ILK_PARCA", "Dış çap", 10, 9.7, 10.3, "mm", 1);
++    await kar(kts.id, "ILK_PARCA", "Örgü sıklığı", 12, 11, 13, "tur/cm", 2);
++    await kar(kts.id, "METRAJ", "Dış çap", 10, 9.7, 10.3, "mm", 1);
++    await kar(ps.id, "ILK_PARCA", "İç çap", 12, 11.8, 12.2, "mm", 1);
++    await kar(ps.id, "ILK_PARCA", "Et kalınlığı", 0.8, 0.7, 0.9, "mm", 2);
++    await kar(ps.id, "METRAJ", "İç çap", 12, 11.8, 12.2, "mm", 1);
++    await kar(ps.id, "METRAJ", "Dış çap", 13.6, 13.3, 13.9, "mm", 2);
+     // Periyodik proses kontrolu (uretim sirasinda, en gec prosesOlcumAraligiDk dakikada bir)
+-    await kar(kts.id, "PROSES", "Dis cap", 10, 9.7, 10.3, "mm", 1);
+-    await kar(kts.id, "PROSES", "Orgu sikligi", 12, 11, 13, "tur/cm", 2);
+-    await kar(ps.id, "PROSES", "Ic cap", 12, 11.8, 12.2, "mm", 1);
++    await kar(kts.id, "PROSES", "Dış çap", 10, 9.7, 10.3, "mm", 1);
++    await kar(kts.id, "PROSES", "Örgü sıklığı", 12, 11, 13, "tur/cm", 2);
++    await kar(ps.id, "PROSES", "İç çap", 12, 11.8, 12.2, "mm", 1);
+ 
+     for (const [kod, aciklama] of [
+-      ["H-01", "Olcu uygunsuz"],
+-      ["H-02", "Cap uygunsuz"],
++      ["H-01", "Ölçü uygunsuz"],
++      ["H-02", "Çap uygunsuz"],
+       ["H-03", "Renk uygunsuz"],
+-      ["H-04", "Orgu sikligi uygunsuz"],
+-      ["H-05", "Tel kopmasi"],
+-      ["H-06", "Yuzey hatasi"],
+-      ["H-07", "Hammadde kaynakli"],
+-      ["H-08", "Makine kaynakli"],
++      ["H-04", "Örgü sıklığı uygunsuz"],
++      ["H-05", "Tel kopması"],
++      ["H-06", "Yüzey hatası"],
++      ["H-07", "Hammadde kaynaklı"],
++      ["H-08", "Makine kaynaklı"],
+     ]) {
+       await c.query("INSERT INTO hata_kodu (firma_id, kod, aciklama) VALUES ($1,$2,$3)", [F, kod, aciklama]);
+     }
+@@ -160,8 +162,8 @@ async function main() {
+     for (const [kod, ad, tip] of [
+       ["YR-D1-R01", "Depo 1 Raf 1", "RAF"],
+       ["YR-D1-R02", "Depo 1 Raf 2", "RAF"],
+-      ["YR-KAR", "Karantina alani", "KARANTINA"],
+-      ["YR-NUM-01", "Numune dolabi 1", "NUMUNE"],
++      ["YR-KAR", "Karantina alanı", "KARANTINA"],
++      ["YR-NUM-01", "Numune dolabı 1", "NUMUNE"],
+     ]) {
+       await c.query("INSERT INTO depo_yeri (firma_id, kod, ad, tip) VALUES ($1,$2,$3,$4)", [F, kod, ad, tip]);
+     }
+@@ -169,9 +171,9 @@ async function main() {
+     // Olcum aletleri: kalibrasyonu gecerli iki alet, suresi gecmis bir alet (gostermek icin)
+     const berra = (await c.query("SELECT id FROM kullanici WHERE firma_id = $1 AND kullanici_adi = 'berra'", [F])).rows[0].id;
+     for (const [kod, ad, konum, periyot, ayOnce] of [
+-      ["KMP-01", "Dijital kumpas 0-150 mm", "Orgu salonu", 12, 2],
+-      ["MKR-01", "Mikrometre 0-25 mm", "Kalite laboratuvari", 12, 5],
+-      ["KMP-02", "Dijital kumpas 0-150 mm (yedek)", "Ekstruzyon", 6, 8],
++      ["KMP-01", "Dijital kumpas 0-150 mm", "Örgü salonu", 12, 2],
++      ["MKR-01", "Mikrometre 0-25 mm", "Kalite laboratuvarı", 12, 5],
++      ["KMP-02", "Dijital kumpas 0-150 mm (yedek)", "Ekstrüzyon", 6, 8],
+     ]) {
+       const a = await ekle(
+         `INSERT INTO olcum_aleti (firma_id, kod, ad, konum, periyot_ay, son_kalibrasyon, sonraki_kalibrasyon)
+diff --git a/backend/src/routes/isemri.routes.js b/backend/src/routes/isemri.routes.js
+index ee19dc7b..4464f2b5 100644
+--- a/backend/src/routes/isemri.routes.js
++++ b/backend/src/routes/isemri.routes.js
+@@ -10,7 +10,7 @@ const { yeniNumara } = require("../services/numara");
+ const { olayYaz, izYaz, farklar } = require("../services/iz");
+ const { etiketBas } = require("../services/etiket");
+ const { birimBul, birimOlustur, bagla, birimGuncelle, blokeKontrol, firmaAyarlari } = require("../services/birim");
+-const { onayOlustur, onayKontrol, onaySifirla } = require("../services/onay");
++const { onayOlustur, onayKontrol, onaySifirla, onayEsitle } = require("../services/onay");
+ const { yuvarla, sifirMi } = require("../lib/miktar");
+ const { aletKontrol } = require("../services/alet");
+ 
+@@ -739,6 +739,8 @@ router.post(
+       if (gerekce.length < 5) throw hatalar.gecersiz("Iptal gerekcesi en az 5 karakter olmali");
+       await durumDegistir(c, req.ctx, ie, S.IPTAL, gerekce);
+       await c.query("UPDATE is_emri SET iptal_eden = $1, iptal_zamani = now(), iptal_gerekcesi = $2 WHERE id = $3", [req.ctx.kullaniciId, gerekce, ie.id]);
++      // Bekleyen onay kapanir (iptal edilen is emri kimsenin onay kutusunda kalmasin)
++      await onayEsitle(c, req.ctx, "IS_EMRI", ie.no, "REDDEDILDI", `Kayit iptal edildi: ${gerekce}`);
+       return { no: ie.no, durum: S.IPTAL };
+     });
+     res.json(sonuc);
+diff --git a/backend/src/routes/izlenebilirlik.routes.js b/backend/src/routes/izlenebilirlik.routes.js
+index fac47711..acfec678 100644
+--- a/backend/src/routes/izlenebilirlik.routes.js
++++ b/backend/src/routes/izlenebilirlik.routes.js
+@@ -9,6 +9,7 @@ const { olayYaz, birimDurumu } = require("../services/iz");
+ const { etiketBas, etiketVerisi, zplUret } = require("../services/etiket");
+ const { birimBul, birimGuncelle } = require("../services/birim");
+ const { cozumle, agac, zamanCizelgesi } = require("../services/izlenebilirlik");
++const { ozet } = require("../services/hikaye");
+ 
+ const router = express.Router();
+ const yonOku = (q) => d.secim(q || "ikisi", "Yon", ["geri", "ileri", "ikisi"]);
+@@ -40,6 +41,14 @@ router.get(
+ );
+ 
+ // GET /api/birimler/:barkod/etiket  -> etiket onizlemesi (kayit olusturmaz)
++// GET /api/izlenebilirlik/:barkod/ozet  -> duz cumlelerle hikaye + uretim lotu / hammadde lotu dokumu (services/hikaye.js)
++router.get(
++  "/izlenebilirlik/:barkod/ozet",
++  sar(async (req, res) => {
++    res.json(await ozet(pool, req.ctx.firmaId, req.params.barkod));
++  }),
++);
++
+ router.get(
+   "/birimler/:barkod/etiket",
+   sar(async (req, res) => {
+diff --git a/backend/src/routes/sevkiyat.routes.js b/backend/src/routes/sevkiyat.routes.js
+index c80ea515..4b06e530 100644
+--- a/backend/src/routes/sevkiyat.routes.js
++++ b/backend/src/routes/sevkiyat.routes.js
+@@ -7,7 +7,7 @@ const { ROLLER, BIRIM_DURUM: D, OLAY } = require("../lib/sabitler");
+ const { rol } = require("../middleware/auth");
+ const { yeniNumara } = require("../services/numara");
+ const { olayYaz, birimDurumu, izYaz } = require("../services/iz");
+-const { onayOlustur, onayKontrol, onaySifirla } = require("../services/onay");
++const { onayOlustur, onayKontrol, onaySifirla, onayEsitle } = require("../services/onay");
+ const { yuvarla } = require("../lib/miktar");
+ const { birimBul, birimGuncelle, blokeKontrol, firmaAyarlari } = require("../services/birim");
+ 
+@@ -247,6 +247,8 @@ router.post(
+       }
+       await c.query("UPDATE sevkiyat SET durum = 'IPTAL', iptal_eden = $1, iptal_zamani = now(), iptal_gerekcesi = $2 WHERE id = $3", [req.ctx.kullaniciId, gerekce, s.id]);
+       await izYaz(c, req.ctx, { tablo: "sevkiyat", kayitId: s.id, islem: "IPTAL", degisiklikler: [{ alan: "durum", eski: s.durum, yeni: "IPTAL" }], gerekce });
++      // Bekleyen onay kapanir (iptal edilen sevkiyat kimsenin onay kutusunda kalmasin)
++      await onayEsitle(c, req.ctx, "SEVKIYAT", s.no, "REDDEDILDI", `Kayit iptal edildi: ${gerekce}`);
+       return { no: s.no, durum: "IPTAL", serbestBirakilan: liste.length };
+     });
+     res.json(sonuc);
+diff --git a/backend/src/services/denge.js b/backend/src/services/denge.js
+index 8d28f935..9bb827b0 100644
+--- a/backend/src/services/denge.js
++++ b/backend/src/services/denge.js
+@@ -26,6 +26,7 @@ const LOT_SECIM = `
+          COALESCE(f.uygun, 0) AS uygun, COALESCE(f.sevk_edilen, 0) AS sevk_edilen,
+          COALESCE(f.kalite_bekleyen, 0) AS kalite_bekleyen, COALESCE(f.fg_karantina, 0) AS fg_karantina,
+          COALESCE(f.parca_sayisi, 0) AS parca_sayisi, COALESCE(f.bloke_parca, 0) AS bloke_parca,
++         COALESCE(f.bloke_miktar, 0) AS bloke_miktar, COALESCE(f.stokta, 0) AS stokta, COALESCE(f.sevke_ayrilan, 0) AS sevke_ayrilan,
+          COALESCE(k.karantina, 0) AS karantina, COALESCE(k.karantina_bekleyen, 0) AS karantina_bekleyen,
+          COALESCE(k.karantina_olumlu, 0) AS karantina_olumlu,
+          COALESCE(h.kesim_firesi, 0) AS kesim_firesi, COALESCE(h.top_hurda, 0) AS top_hurda,
+@@ -45,7 +46,11 @@ const LOT_SECIM = `
+              sum(b.miktar) FILTER (WHERE b.durum = 'KALITE_BEKLIYOR') AS kalite_bekleyen,
+              sum(b.miktar) FILTER (WHERE b.durum = 'KARANTINA') AS fg_karantina,
+              count(*) FILTER (WHERE b.durum NOT IN ('BOLUNDU','RET','HURDA')) AS parca_sayisi,
+-             count(*) FILTER (WHERE b.bloke AND b.durum NOT IN ('BOLUNDU','RET','HURDA')) AS bloke_parca
++             count(*) FILTER (WHERE b.bloke AND b.durum NOT IN ('BOLUNDU','RET','HURDA')) AS bloke_parca,
++             -- Depoda duran uygun parcalar: bloke olanlar ayri sayilir (sevk edilemezler)
++             sum(b.miktar) FILTER (WHERE b.bloke AND b.durum IN ('SERBEST','DEPODA','SIPARISE_AYRILDI')) AS bloke_miktar,
++             sum(b.miktar) FILTER (WHERE NOT b.bloke AND b.durum IN ('SERBEST','DEPODA')) AS stokta,
++             sum(b.miktar) FILTER (WHERE NOT b.bloke AND b.durum = 'SIPARISE_AYRILDI') AS sevke_ayrilan
+         FROM birim b WHERE b.lot_id = l.id AND b.tip = 'FG') f ON true
+     LEFT JOIN LATERAL (
+       SELECT sum(b.ilk_miktar) AS karantina,
+diff --git a/backend/src/services/hammadde.js b/backend/src/services/hammadde.js
+index 08098294..5b8ff37f 100644
+--- a/backend/src/services/hammadde.js
++++ b/backend/src/services/hammadde.js
+@@ -71,6 +71,8 @@ async function hammaddeIptal(c, ctx, lotNo, gerekce) {
+     tablo: "lot", kayitId: lot.id, islem: "IPTAL",
+     degisiklikler: [{ alan: "durum", eski: lot.durum, yeni: D.IPTAL }], gerekce,
+   });
++  // Bekleyen giris kontrolu onayi kapanir (iptal edilen kayit kimsenin onay kutusunda kalmasin)
++  await onayEsitle(c, ctx, "HAMMADDE", lot.no, O.REDDEDILDI, `Kayit iptal edildi: ${gerekce}`);
+   return { lotNo: lot.no, iptalEdilenAmbalaj: birimler.length };
+ }
+ 
+diff --git a/backend/src/services/hikaye.js b/backend/src/services/hikaye.js
+new file mode 100644
+index 00000000..c18d247c
+--- /dev/null
++++ b/backend/src/services/hikaye.js
+@@ -0,0 +1,548 @@
++// Urun hikayesi ozeti: bir barkodun ne oldugunu duz cumlelerle ve tek kaynaktan gelen sayilarla anlatir.
++// Akis diyagrami ve miktar dengesi ekranlari bu servisi kullanir; boylece her ekran ayni sayiyi gosterir.
++//
++//   - Parca yolculugu: bir makaranin/bobinin sirayla basina gelenler ("Son kontrol -> Ege'ye sevk -> iade -> ret")
++//   - Uretim lotu ozeti: top + bu topu ureten is emri (hangi bobinden ne kadar kullanildi) + parcalar
++//   - Hammadde lotu ozeti: bobin bobin ne oldu (hangi is emrine ne kadar gitti, ne kadari depoda, ne kadari hurda)
++const { bir } = require("../config/db");
++const { hatalar } = require("../lib/hata");
++const { LOT_SECIM, lotDengesi } = require("./denge");
++const { cozumle } = require("./izlenebilirlik");
++const { yuvarla } = require("../lib/miktar");
++
++const sayi = (n, h = 2) => (Number(n) || 0).toLocaleString("tr-TR", { maximumFractionDigits: h });
++const tarih = (t) =>
++  t
++    ? new Date(t).toLocaleString("tr-TR", { timeZone: "Europe/Istanbul", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
++    : "";
++const gun = (t) => (t ? new Date(t).toLocaleDateString("tr-TR", { timeZone: "Europe/Istanbul", day: "numeric", month: "long" }) : "");
++
++// Bir birimin olaylarindan kisa adimlar uretir (en eskiden en yeniye)
++function adimlar(olaylar) {
++  const sonuc = [];
++  for (const o of olaylar) {
++    const v = o.veri || {};
++    let metin = null;
++    let ana = false; // ozet satirina girer mi
++    switch (o.tip) {
++      case "KABUL":
++        metin = `Mal kabul: ${sayi(o.miktar)} ${o.olcu_birimi || ""}`;
++        break;
++      case "KONTROL_KARARI":
++        metin = v.yeni === "KABUL" ? "Giriş kontrolü: kabul" : v.yeni === "RET" ? "Giriş kontrolü: ret" : v.yeni === "KARANTINA" ? "Karantinaya alındı" : "Giriş kontrolü";
++        ana = v.yeni !== "KABUL";
++        break;
++      case "BOLME":
++        metin = `${sayi(o.miktar)} ${o.olcu_birimi || ""} ayrılıp ${o.karsi_barkod} oldu`;
++        ana = true;
++        break;
++      case "CEKIS":
++        metin = "Depodan hatta çekildi";
++        break;
++      case "YUKLEME":
++        metin = `Makineye takıldı${o.is_emri_no ? ` (${o.is_emri_no})` : ""}`;
++        break;
++      case "TUKETIM":
++        metin = `Üretimde kullanıldı: ${sayi(o.miktar)} ${o.olcu_birimi || ""}${o.is_emri_no ? ` (${o.is_emri_no})` : ""}`;
++        ana = true;
++        break;
++      case "IADE":
++        metin = `Depoya geri döndü: ${sayi(o.miktar)} ${o.olcu_birimi || ""}`;
++        ana = true;
++        break;
++      case "URETIM":
++        metin = `Üretildi: ${sayi(o.miktar)} ${o.olcu_birimi || ""}`;
++        ana = true;
++        break;
++      case "KESIM":
++        if (/bolundu/.test(o.aciklama || "")) {
++          metin = `Yeniden kesildi: ${(o.aciklama || "").replace("parcaya bolundu", "parçaya bölündü")}`;
++          ana = true;
++        } else {
++          const adet = Array.isArray(v.parcalar) ? v.parcalar.length : null;
++          metin = `Kesildi: ${adet ? `${adet} parça, ` : ""}${sayi(o.miktar)} ${o.olcu_birimi || ""}`;
++          ana = true;
++        }
++        break;
++      case "NUMUNE":
++        metin = `Şahit numune alındı: ${sayi(o.miktar)} ${o.olcu_birimi || ""}`;
++        ana = true;
++        break;
++      case "SON_KONTROL":
++        metin = v.yeni === "SERBEST" ? "Son kontrol: serbest" : v.yeni === "RET" ? "Son kontrol: reddedildi" : v.yeni === "KARANTINA" ? "Son kontrol: karantinaya alındı" : "Son kontrol";
++        ana = true;
++        break;
++      case "KARANTINAYA_AYIRMA":
++        metin = `Karantinaya ayrıldı: ${sayi(o.miktar)} ${o.olcu_birimi || ""}`;
++        ana = true;
++        break;
++      case "KARANTINA_KARARI":
++        metin = `Kalite kararı: ${{ OLUMLU: "olumlu", HURDA: "hurda", SARTLI_KABUL: "şartlı kabul", KESIM_BEKLIYOR: "yeniden işleme", YENIDEN_ISLEME: "yeniden işleme" }[v.yeni] || v.yeni || ""}`;
++        ana = true;
++        break;
++      case "YERLESTIRME":
++        metin = `Rafa kondu${o.aciklama ? ` (${o.aciklama})` : ""}`;
++        break;
++      case "SIPARISE_AYIRMA":
++        metin = "Sevkiyata okutuldu";
++        break;
++      case "SEVKIYAT":
++        metin = `Sevk edildi: ${v.musteri || ""}`;
++        ana = true;
++        break;
++      case "MUSTERI_IADESI":
++        metin = "Müşteriden iade geldi";
++        ana = true;
++        break;
++      case "HURDA":
++        metin = v.neden === "KESIM_FIRESI" ? `Kesim firesi: ${sayi(o.miktar)} ${o.olcu_birimi || ""}` : `Hurdaya ayrıldı: ${sayi(o.miktar)} ${o.olcu_birimi || ""}`;
++        ana = true;
++        break;
++      case "BLOKE":
++        metin = "Bloke edildi (sevk edilemez)";
++        ana = true;
++        break;
++      case "BLOKE_KALDIRMA":
++        metin = "Bloke kaldırıldı";
++        ana = true;
++        break;
++      case "ETIKET_BASKISI":
++        if (/Kopya ([2-9]|\d\d)/.test(o.aciklama || "")) {
++          const neden = (o.aciklama || "").split(" - ").slice(1).join(" - ");
++          metin = `Etiket yeniden basıldı${neden ? ` (${neden.replace(/\.$/, "")})` : ""}`;
++          ana = true;
++        }
++        break;
++      case "IPTAL":
++        metin = "İptal edildi";
++        ana = true;
++        break;
++      default:
++        break;
++    }
++    if (metin) sonuc.push({ zaman: o.zaman, metin, ana, kim: o.kullanici, aciklama: o.aciklama });
++  }
++  return sonuc;
++}
++
++// Birimin su anki hali, tek cumle
++function simdi(b, ek = {}) {
++  const yer = b.yer && b.yer.startsWith("DEPO:") ? ` (${b.yer.slice(5)})` : "";
++  if (b.durum === "SEVK_EDILDI") return `Müşteride${ek.musteri ? `: ${ek.musteri}` : ""}`;
++  if (["HURDA", "RET"].includes(b.durum)) return "Hurdaya ayrıldı";
++  if (b.durum === "BOLUNDU") return ek.cocuklar?.length ? `Bölündü: ${ek.cocuklar.join(" + ")}` : "Bölündü";
++  if (b.durum === "TUKENDI") return "Tamamı kullanıldı";
++  if (b.durum === "KESILDI") return "Tamamı kesildi";
++  if (b.durum === "IPTAL") return "İptal edildi";
++  if (b.bloke) return `Depoda, bloke: sevk edilemez${yer}`;
++  if (b.durum === "SIPARISE_AYRILDI") return `Sevkiyata ayrıldı, henüz gönderilmedi${yer}`;
++  if (["SERBEST", "DEPODA"].includes(b.durum)) return `Depoda, kullanılabilir${yer}`;
++  if (b.durum === "OLUMLU") return "Olumlu karar: yeni numarayla stoğa girdi";
++  if (b.durum === "SARTLI_KABUL") return "Şartlı kabul: yeni numarayla stoğa girdi";
++  if (b.durum === "KALITE_BEKLIYOR") return "Son kontrol bekliyor";
++  if (b.durum === "KARANTINA" && b.tip === "RM") return `Depoda, karantinada: kullanılamaz${yer}`;
++  if (b.durum === "KARANTINA") return "Karantina alanında, kalite kararı bekliyor";
++  if (b.durum === "KARAR_BEKLIYOR") return "Karantinada, kalite kararı bekliyor";
++  if (b.durum === "KESIM_BEKLIYOR") return "Kesim bekliyor";
++  if (b.durum === "KONTROL_BEKLIYOR") return "Giriş kontrolü bekliyor";
++  if (b.yer && b.yer.startsWith("HAT:")) return `Makine başında (${b.yer.slice(4)})`;
++  if (b.durum === "KABUL") return `Depoda, kullanılabilir${yer}`;
++  return "";
++}
++
++// Birden fazla birimin yolculugu: { [birimId]: { adimlar, ozet, simdi } }
++async function yolculuklar(c, F, birimler) {
++  if (!birimler.length) return {};
++  const idler = birimler.map((b) => b.id);
++  const olaylar = await c.query(
++    `SELECT o.id, o.birim_id, o.zaman, o.tip, o.miktar, o.olcu_birimi, o.aciklama, o.veri,
++            kb.barkod AS karsi_barkod, ie.no AS is_emri_no, k.ad_soyad AS kullanici
++       FROM olay o
++       LEFT JOIN birim kb ON kb.id = o.karsi_birim_id
++       LEFT JOIN is_emri ie ON ie.id = o.is_emri_id
++       LEFT JOIN kullanici k ON k.id = o.kullanici_id
++      WHERE o.firma_id = $1 AND o.birim_id = ANY($2::uuid[])
++     UNION ALL
++     -- Sahit numune olayi numune biriminde durur; topun yolculugunda da gorunsun (top = karsi birim)
++     SELECT o.id, o.karsi_birim_id AS birim_id, o.zaman, o.tip, o.miktar, o.olcu_birimi, o.aciklama, o.veri,
++            NULL AS karsi_barkod, NULL AS is_emri_no, k.ad_soyad AS kullanici
++       FROM olay o LEFT JOIN kullanici k ON k.id = o.kullanici_id
++      WHERE o.firma_id = $1 AND o.tip = 'NUMUNE' AND o.karsi_birim_id = ANY($2::uuid[])
++      ORDER BY zaman, id`,
++    [F, idler],
++  );
++  const sevk = await c.query(
++    `SELECT ss.birim_id, mu.unvan AS musteri FROM sevkiyat_satiri ss JOIN sevkiyat s ON s.id = ss.sevkiyat_id
++       JOIN musteri mu ON mu.id = s.musteri_id WHERE ss.birim_id = ANY($1::uuid[]) AND s.durum = 'SEVK_EDILDI'`,
++    [idler],
++  );
++  const kaynaklar = await c.query(
++    "SELECT b.id, k.barkod, k.tip FROM birim b JOIN birim k ON k.id = b.kaynak_birim_id WHERE b.id = ANY($1::uuid[])",
++    [idler],
++  );
++  const cocuk = await c.query(
++    "SELECT kaynak_birim_id, barkod, ilk_miktar FROM birim WHERE kaynak_birim_id = ANY($1::uuid[]) ORDER BY sira NULLS LAST, barkod",
++    [idler],
++  );
++  const sonuc = {};
++  for (const b of birimler) {
++    const kendi = olaylar.rows.filter((o) => o.birim_id === b.id);
++    const a = adimlar(kendi);
++    // Baska bir parcadan bolunerek / kesilerek olustuysa bunu en basa yaz
++    const kaynak = kaynaklar.rows.find((x) => x.id === b.id);
++    if (kaynak) {
++      a.unshift({
++        zaman: b.olusturma_zamani || null,
++        metin: kaynak.tip === "KR" ? `${kaynak.barkod} karantina kaydından geldi` : `${kaynak.barkod} parçasından ayrıldı`,
++        ana: true,
++      });
++    }
++    const cocuklar = cocuk.rows.filter((x) => x.kaynak_birim_id === b.id).map((x) => `${x.barkod} (${sayi(x.ilk_miktar)} ${b.olcu_birimi})`);
++    const musteri = sevk.rows.find((x) => x.birim_id === b.id)?.musteri;
++    sonuc[b.id] = {
++      adimlar: a,
++      ozet: a.filter((x) => x.ana).map((x) => x.metin).join(" → "),
++      simdi: simdi(b, { musteri, cocuklar }),
++    };
++  }
++  return sonuc;
++}
++
++// Uretim lotu (top) ozeti
++async function uretimLotuOzeti(c, F, topId) {
++  const satir = await bir(c, `${LOT_SECIM} AND l.id = (SELECT lot_id FROM birim WHERE id = $2)`, [F, topId]);
++  if (!satir) throw hatalar.bulunamadi("Uretim lotu bulunamadi");
++  const denge = lotDengesi(satir);
++  const b = satir.olcu_birimi || "m";
++
++  // Lotun parcalari: kesilen makaralar, bolunenlerden cikanlar, karantina, numune
++  const birimler = (
++    await c.query(
++      `SELECT b.id, b.barkod, b.tip, b.durum, b.bloke, b.ilk_miktar, b.miktar, b.olcu_birimi, b.yer, b.ek, b.kaynak_birim_id, b.olusturma_zamani
++         FROM birim b WHERE b.lot_id = $1 AND b.tip IN ('FG','KR','NM') ORDER BY b.tip, b.sira NULLS LAST, b.barkod`,
++      [satir.id],
++    )
++  ).rows;
++  const yol = await yolculuklar(c, F, birimler);
++  const parcalar = birimler
++    .filter((x) => x.tip === "FG")
++    .map((x) => ({
++      barkod: x.barkod,
++      metre: Number(x.ilk_miktar),
++      kalan: Number(x.miktar),
++      durum: x.durum,
++      bloke: x.bloke,
++      kaynak: birimler.find((y) => y.id === x.kaynak_birim_id)?.barkod || null,
++      karantinadanGelen: !!(x.ek && x.ek.karantinadan),
++      ...yol[x.id],
++    }));
++  const karantina = birimler
++    .filter((x) => x.tip === "KR")
++    .map((x) => ({ barkod: x.barkod, metre: Number(x.ilk_miktar), durum: x.durum, neden: x.ek?.hataAciklama, hataKodu: x.ek?.hataKodu, ...yol[x.id] }));
++  const numune = birimler.filter((x) => x.tip === "NM").map((x) => ({ barkod: x.barkod, metre: Number(x.ilk_miktar), yer: x.ek?.arsivYeri }));
++
++  // Bu topu ureten is emri: hangi bobinden ne kadar kullanildi, is emrinden baska ne cikti
++  const ie = await bir(
++    c,
++    `SELECT ie.id, ie.no, ie.durum, ie.baslangic, ie.bitis, ie.hedef_miktar, ie.denge, m.kod AS makine_kod,
++            mu.unvan AS musteri,
++            (SELECT string_agg(DISTINCT k.ad_soyad, ', ') FROM is_emri_baglama g JOIN kullanici k ON k.id = g.kullanici_id WHERE g.is_emri_id = ie.id) AS operatorler
++       FROM is_emri ie JOIN makine m ON m.id = ie.makine_id LEFT JOIN musteri mu ON mu.id = ie.musteri_id
++      WHERE ie.id = (SELECT is_emri_id FROM birim WHERE id = $1)`,
++    [topId],
++  );
++  let isEmri = null;
++  if (ie) {
++    const bobinler = (
++      await c.query(
++        `SELECT rb.barkod, rb.olcu_birimi, m.kod AS malzeme_kod, rl.no AS lot_no, rl.tedarikci_lot, t.unvan AS tedarikci,
++                g.baglama_miktari, g.tuketilen, g.cikarma_zamani
++           FROM is_emri_baglama g JOIN birim rb ON rb.id = g.birim_id
++           LEFT JOIN malzeme m ON m.id = rb.malzeme_id LEFT JOIN lot rl ON rl.id = rb.lot_id LEFT JOIN tedarikci t ON t.id = rl.tedarikci_id
++          WHERE g.is_emri_id = $1 ORDER BY g.baglama_zamani`,
++        [ie.id],
++      )
++    ).rows.map((x) => ({
++      barkod: x.barkod,
++      malzeme: x.malzeme_kod,
++      lotNo: x.lot_no,
++      tedarikci: x.tedarikci,
++      tedarikciLot: x.tedarikci_lot,
++      takilan: Number(x.baglama_miktari),
++      kullanilan: x.cikarma_zamani ? Number(x.tuketilen) : null,
++      iade: x.cikarma_zamani ? yuvarla(Number(x.baglama_miktari) - Number(x.tuketilen)) : null,
++      birim: x.olcu_birimi,
++    }));
++    const ciktilar = (
++      await c.query(
++        `SELECT b.barkod, b.tip, b.ilk_miktar, b.durum FROM birim b
++          WHERE b.is_emri_id = $1 AND (b.tip = 'FG_LOT' OR (b.tip = 'KR')) ORDER BY b.olusturma_zamani`,
++        [ie.id],
++      )
++    ).rows.map((x) => ({ barkod: x.barkod, tip: x.tip, metre: Number(x.ilk_miktar), durum: x.durum }));
++    isEmri = {
++      no: ie.no,
++      durum: ie.durum,
++      makine: ie.makine_kod,
++      musteri: ie.musteri,
++      operatorler: ie.operatorler,
++      baslangic: ie.baslangic,
++      bitis: ie.bitis,
++      hedef: Number(ie.hedef_miktar),
++      denge: ie.denge,
++      bobinler,
++      ciktilar,
++    };
++  }
++
++  // Duz cumleler
++  const cumleler = [];
++  const g = denge.dagilim;
++  const tedarik = isEmri ? [...new Set(isEmri.bobinler.map((x) => `${x.tedarikci || "?"} ${x.tedarikciLot ? `(parti ${x.tedarikciLot})` : ""}`.trim()))] : [];
++  if (isEmri) {
++    const kullanilan = isEmri.bobinler.filter((x) => x.kullanilan !== null);
++    const kg = yuvarla(kullanilan.reduce((t, x) => t + x.kullanilan, 0));
++    cumleler.push(
++      `${satir.top_barkod}, ${gun(satir.bitis)} günü ${isEmri.makine} makinesinde ${isEmri.operatorler || "operatör"} tarafından üretilen ${sayi(satir.top_metraji)} ${b}'lik toptur (iş emri ${isEmri.no}).`,
++    );
++    if (kullanilan.length) {
++      cumleler.push(
++        `Hammadde: ${tedarik.join(", ")}. Bu iş emrine ${kullanilan.map((x) => `${x.barkod} bobininden ${sayi(x.kullanilan)} ${x.birim}`).join(", ")} kullanıldı; toplam ${sayi(kg)} kg.`,
++      );
++    } else if (isEmri.bobinler.length) {
++      cumleler.push(`Hammadde: ${tedarik.join(", ")}. İş emri bitmediği için kullanılan miktar henüz kesinleşmedi.`);
++    }
++    const digerTop = isEmri.ciktilar.filter((x) => x.tip === "FG_LOT" && x.barkod !== satir.top_barkod);
++    const kr = isEmri.ciktilar.filter((x) => x.tip === "KR");
++    if (digerTop.length || kr.length) {
++      cumleler.push(
++        `Aynı iş emrinden bu topun dışında ${[
++          digerTop.length ? `${digerTop.map((x) => `${x.barkod} (${sayi(x.metre)} ${b})`).join(", ")} topu` : "",
++          kr.length ? `üretim sırasında karantinaya ayrılan ${sayi(kr.reduce((t, x) => t + x.metre, 0))} ${b}` : "",
++        ]
++          .filter(Boolean)
++          .join(" ve ")} çıktı.`,
++      );
++    }
++  }
++  const sevkM = Number(satir.sevk_edilen || 0);
++  const parcalarYaprak = parcalar.filter((x) => x.durum !== "BOLUNDU");
++  // Topun kendi dagilimi: karantinadan (KR) gelen parcalar topun metresine dahil degildir, ayri anlatilir
++  const birimById = new Map(birimler.map((x) => [x.id, x]));
++  const krKokenli = (x) => {
++    for (let k = birimById.get(x.kaynak_birim_id), adim = 0; k && adim < 50; k = birimById.get(k.kaynak_birim_id), adim++) {
++      if (k.tip === "KR") return true;
++    }
++    return false;
++  };
++  const topun = { sevk: 0, stok: 0, ayrilan: 0, bloke: 0, kalite: 0, karantina: 0, ret: 0 };
++  for (const x of birimler) {
++    if (x.tip !== "FG" || x.durum === "BOLUNDU" || krKokenli(x)) continue;
++    const m = Number(x.miktar);
++    if (x.durum === "SEVK_EDILDI") topun.sevk += m;
++    else if (["RET", "HURDA"].includes(x.durum)) topun.ret += Number(x.ilk_miktar);
++    else if (x.bloke && ["SERBEST", "DEPODA", "SIPARISE_AYRILDI"].includes(x.durum)) topun.bloke += m;
++    else if (["SERBEST", "DEPODA"].includes(x.durum)) topun.stok += m;
++    else if (x.durum === "SIPARISE_AYRILDI") topun.ayrilan += m;
++    else if (x.durum === "KALITE_BEKLIYOR") topun.kalite += m;
++    else if (x.durum === "KARANTINA") topun.karantina += m;
++  }
++  const bolumler = [];
++  if (g.numune) bolumler.push(`${sayi(g.numune)} ${b} şahit numune`);
++  if (topun.sevk) bolumler.push(`${sayi(topun.sevk)} ${b} müşteriye gitti`);
++  if (topun.stok) bolumler.push(`${sayi(topun.stok)} ${b} depoda, kullanılabilir`);
++  if (topun.ayrilan) bolumler.push(`${sayi(topun.ayrilan)} ${b} sevkiyata ayrıldı (henüz gönderilmedi)`);
++  if (topun.bloke) bolumler.push(`${sayi(topun.bloke)} ${b} depoda ama bloke`);
++  if (topun.kalite) bolumler.push(`${sayi(topun.kalite)} ${b} son kontrol bekliyor`);
++  if (topun.karantina) bolumler.push(`${sayi(topun.karantina)} ${b} son kontrolde karantinaya alındı`);
++  if (g.kesilmemis) bolumler.push(`${sayi(g.kesilmemis)} ${b} henüz kesilmedi`);
++  const topHurda = yuvarla(Number(satir.kesim_firesi || 0) + Number(satir.top_hurda || 0) + topun.ret);
++  if (topHurda) bolumler.push(`${sayi(topHurda)} ${b} hurda (${[
++    Number(satir.kesim_firesi) ? `${sayi(satir.kesim_firesi)} ${b} kesim firesi` : "",
++    topun.ret ? `${sayi(topun.ret)} ${b} reddedilen makara` : "",
++    Number(satir.top_hurda) ? `${sayi(satir.top_hurda)} ${b} top hurdası` : "",
++  ].filter(Boolean).join(", ")})`);
++  const topToplam = yuvarla(Number(g.numune) + topun.sevk + topun.stok + topun.ayrilan + topun.bloke + topun.kalite + topun.karantina + Number(g.kesilmemis) + topHurda);
++  cumleler.push(
++    `${sayi(satir.top_metraji)} ${b}'lik toptan: ${bolumler.join(", ") || "henüz bir şey çıkmadı"}.` +
++      (bolumler.length > 1 ? ` Kontrol: ${sayi(topToplam)} ${b}${Number(satir.olcum_fazlasi) ? ` (kesimde ${sayi(satir.olcum_fazlasi)} ${b} ölçüm fazlası dahil)` : ""}.` : ""),
++  );
++  if (Number(satir.karantina)) {
++    const krParcalar = birimler.filter((x) => x.tip === "KR");
++    const krDurum = krParcalar.map((k) => {
++      const m = `${sayi(k.ilk_miktar)} ${b}`;
++      const yeni = birimler.find((x) => x.kaynak_birim_id === k.id);
++      if (k.durum === "OLUMLU") return `${m} olumlu → ${yeni ? yeni.barkod : "yeni numara"}`;
++      if (k.durum === "SARTLI_KABUL") return `${m} şartlı kabul → ${yeni ? yeni.barkod : "yeni numara"}`;
++      if (k.durum === "HURDA") return `${m} hurda`;
++      if (k.durum === "YENIDEN_ISLEME") return `${m} yeniden işlemede`;
++      return `${m} kalite kararı bekliyor`;
++    });
++    cumleler.push(
++      `Ayrıca top bitmeden, makine başında ${sayi(satir.karantina)} ${b} karantinaya ayrıldı (topun ${sayi(satir.top_metraji)} ${b}'sine dahil değildir): ${krDurum.join("; ")}.`,
++    );
++  }
++  for (const p of parcalarYaprak.filter((x) => /iade/.test(x.ozet || "") || x.bloke)) {
++    cumleler.push(`${p.barkod} (${sayi(p.metre)} ${b}): ${p.ozet}.`);
++  }
++
++  return {
++    tur: "URETIM_LOTU",
++    lotNo: satir.no,
++    topBarkod: satir.top_barkod,
++    urun: `${satir.urun_kod} ${satir.urun_ad}`,
++    birim: b,
++    cumleler,
++    denge: {
++      ...denge,
++      topMetraji: Number(satir.top_metraji),
++      karantina: Number(satir.karantina || 0),
++      sevkEdilen: sevkM,
++      stokta: Number(satir.stokta || 0),
++      sevkeAyrilan: Number(satir.sevke_ayrilan || 0),
++      blokeMiktar: Number(satir.bloke_miktar || 0),
++      kesimFiresi: Number(satir.kesim_firesi || 0),
++      ret: Number(satir.ret || 0),
++      topHurda: Number(satir.top_hurda || 0),
++      karantinaHurda: Number(satir.karantina_hurda || 0),
++    },
++    isEmri,
++    parcalar,
++    karantina,
++    numune,
++  };
++}
++
++// Hammadde lotu ozeti: bobin bobin
++async function hammaddeLotuOzeti(c, F, lotId) {
++  const lot = await bir(
++    c,
++    `SELECT l.id, l.no, l.tedarikci_lot, l.durum, l.olusturma_zamani, m.kod AS malzeme_kod, m.ad AS malzeme_ad, t.unvan AS tedarikci
++       FROM lot l JOIN malzeme m ON m.id = l.malzeme_id LEFT JOIN tedarikci t ON t.id = l.tedarikci_id
++      WHERE l.firma_id = $1 AND l.id = $2`,
++    [F, lotId],
++  );
++  if (!lot) throw hatalar.bulunamadi("Hammadde lotu bulunamadi");
++  const birimler = (
++    await c.query(
++      `SELECT b.id, b.barkod, b.tip, b.durum, b.bloke, b.ilk_miktar, b.miktar, b.olcu_birimi, b.yer, b.kaynak_birim_id, b.sira
++         FROM birim b WHERE b.lot_id = $1 ORDER BY b.sira NULLS LAST, b.barkod`,
++      [lot.id],
++    )
++  ).rows;
++  const idler = birimler.map((x) => x.id);
++  const kullanim = (
++    await c.query(
++      `SELECT g.birim_id, ie.no, mk.kod AS makine, g.baglama_miktari, g.tuketilen, g.cikarma_zamani
++         FROM is_emri_baglama g JOIN is_emri ie ON ie.id = g.is_emri_id JOIN makine mk ON mk.id = ie.makine_id
++        WHERE g.birim_id = ANY($1::uuid[]) ORDER BY g.baglama_zamani`,
++      [idler],
++    )
++  ).rows;
++  const hurda = (
++    await c.query(
++      "SELECT birim_id, sum(miktar) AS m FROM olay WHERE birim_id = ANY($1::uuid[]) AND tip = 'HURDA' GROUP BY birim_id",
++      [idler],
++    )
++  ).rows;
++  const yol = await yolculuklar(c, F, birimler);
++  const bobinler = birimler.map((x) => {
++    const k = kullanim.filter((y) => y.birim_id === x.id);
++    const ayrilan = birimler.filter((y) => y.kaynak_birim_id === x.id);
++    return {
++      barkod: x.barkod,
++      ilk: Number(x.ilk_miktar),
++      kaynak: birimler.find((y) => y.id === x.kaynak_birim_id)?.barkod || null,
++      ayrilan: ayrilan.map((y) => ({ barkod: y.barkod, miktar: Number(y.ilk_miktar) })),
++      isler: k.map((y) => ({
++        isEmriNo: y.no,
++        makine: y.makine,
++        takilan: Number(y.baglama_miktari),
++        kullanilan: y.cikarma_zamani ? Number(y.tuketilen) : null,
++      })),
++      kullanilan: yuvarla(k.reduce((t, y) => t + (y.cikarma_zamani ? Number(y.tuketilen) : 0), 0)),
++      hurda: Number(hurda.find((y) => y.birim_id === x.id)?.m || 0),
++      kalan: Number(x.miktar),
++      durum: x.durum,
++      birim: x.olcu_birimi,
++      ...yol[x.id],
++    };
++  });
++  const asil = bobinler.filter((x) => !x.kaynak);
++  const giris = yuvarla(asil.reduce((t, x) => t + x.ilk, 0));
++  const kullanilan = yuvarla(bobinler.reduce((t, x) => t + x.kullanilan, 0));
++  const hurdaT = yuvarla(bobinler.reduce((t, x) => t + x.hurda, 0));
++  const kalan = yuvarla(bobinler.reduce((t, x) => t + x.kalan, 0));
++  const isler = [...new Set(kullanim.map((y) => `${y.no} (${y.makine})`))];
++  const br = birimler[0]?.olcu_birimi || "kg";
++  const cumleler = [
++    `${lot.tedarikci || "Tedarikçi"} firmasının ${lot.tedarikci_lot || "-"} partisinden ${gun(lot.olusturma_zamani)} günü ${asil.length} ambalaj, toplam ${sayi(giris)} ${br} ${lot.malzeme_ad} geldi (lot ${lot.no}).`,
++    isler.length
++      ? `Bu partiden ${isler.length} iş emrinde toplam ${sayi(kullanilan)} ${br} kullanıldı: ${isler.join(", ")}.`
++      : "Bu partiden henüz üretimde kullanılan yok.",
++    `${sayi(kalan)} ${br} hâlâ duruyor${hurdaT ? `, ${sayi(hurdaT)} ${br} hurdaya ayrıldı` : ""}. Kontrol: ${sayi(giris)} = ${sayi(kullanilan)} + ${sayi(kalan)}${hurdaT ? ` + ${sayi(hurdaT)}` : ""}.`,
++  ];
++  if (lot.durum === "KARANTINA") cumleler.push("Parti şu an karantinada: kalan ambalajlar kullanılamaz.");
++  if (lot.durum === "RET") cumleler.push("Parti giriş kontrolünde reddedildi, üretimde kullanılmadı.");
++  return {
++    tur: "HAMMADDE_LOTU",
++    lotNo: lot.no,
++    tedarikci: lot.tedarikci,
++    tedarikciLot: lot.tedarikci_lot,
++    malzeme: `${lot.malzeme_kod} ${lot.malzeme_ad}`,
++    durum: lot.durum,
++    birim: br,
++    giris,
++    kullanilan,
++    hurda: hurdaT,
++    kalan,
++    tutuyor: Math.abs(giris - kullanilan - hurdaT - kalan) < 0.001,
++    cumleler,
++    bobinler,
++  };
++}
++
++// GET /izlenebilirlik/:barkod/ozet
++async function ozet(c, F, ham) {
++  const r = await cozumle(c, F, ham);
++  const sonuc = { cozum: { tur: r.tur, no: r.no }, odak: null, uretimLotlari: [], hammaddeLotlari: [] };
++  const lotIdleri = { fg: new Set(), rm: new Set() };
++  if (r.tur === "BIRIM") {
++    const b = await bir(c, "SELECT id, tip, lot_id, barkod, durum, bloke, ilk_miktar, miktar, olcu_birimi, yer, kaynak_birim_id FROM birim WHERE id = $1", [r.birim.id]);
++    const y = (await yolculuklar(c, F, [b]))[b.id];
++    sonuc.odak = { barkod: b.barkod, tip: b.tip, metre: Number(b.ilk_miktar), kalan: Number(b.miktar), birim: b.olcu_birimi, ...y };
++    if (["FG_LOT", "FG", "KR", "NM"].includes(b.tip)) {
++      const top = await bir(c, "SELECT id FROM birim WHERE lot_id = $1 AND tip = 'FG_LOT'", [b.lot_id]);
++      if (top) lotIdleri.fg.add(top.id);
++    }
++    if (b.tip === "RM") lotIdleri.rm.add(b.lot_id);
++  } else if (r.tur === "LOT") {
++    if (r.lot.tip === "RM") lotIdleri.rm.add(r.lot.id);
++    else {
++      const top = await bir(c, "SELECT id FROM birim WHERE lot_id = $1 AND tip = 'FG_LOT'", [r.lot.id]);
++      if (top) lotIdleri.fg.add(top.id);
++    }
++  } else if (r.tur === "IS_EMRI") {
++    const x = await c.query("SELECT id FROM birim WHERE is_emri_id = $1 AND tip = 'FG_LOT' ORDER BY olusturma_zamani", [r.isEmri.id]);
++    x.rows.forEach((y) => lotIdleri.fg.add(y.id));
++  } else if (r.tur === "SEVKIYAT") {
++    const x = await c.query(
++      "SELECT DISTINCT t.id FROM sevkiyat_satiri ss JOIN birim b ON b.id = ss.birim_id JOIN birim t ON t.lot_id = b.lot_id AND t.tip = 'FG_LOT' WHERE ss.sevkiyat_id = $1",
++      [r.sevkiyat.id],
++    );
++    x.rows.forEach((y) => lotIdleri.fg.add(y.id));
++  }
++  for (const id of lotIdleri.fg) {
++    const u = await uretimLotuOzeti(c, F, id);
++    sonuc.uretimLotlari.push(u);
++    // Bu topun hammadde partileri de (bobin bobin) eklenir; ekranda "partinin tamami" diye ayri gosterilir
++    for (const no of new Set((u.isEmri?.bobinler || []).map((x) => x.lotNo).filter(Boolean))) {
++      const l = await bir(c, "SELECT id FROM lot WHERE firma_id = $1 AND no = $2", [F, no]);
++      if (l) lotIdleri.rm.add(l.id);
++    }
++  }
++  for (const id of lotIdleri.rm) sonuc.hammaddeLotlari.push(await hammaddeLotuOzeti(c, F, id));
++  return sonuc;
++}
++
++module.exports = { ozet, yolculuklar, uretimLotuOzeti, hammaddeLotuOzeti, simdi, tarih };
+diff --git a/backend/src/services/izlenebilirlik.js b/backend/src/services/izlenebilirlik.js
+index 2b161f22..19fd2052 100644
+--- a/backend/src/services/izlenebilirlik.js
++++ b/backend/src/services/izlenebilirlik.js
+@@ -156,6 +156,39 @@ async function agac(c, F, ham, yon = "ikisi") {
+     }
+   }
+ 
++  // Hammadde kutulari: bu agactaki is emirlerine bu ambalajdan ne kadar gitti (ilk miktar degil, kullanilan).
++  // Sadece "bundan bolundu" diye agaca giren ambalaj (kendisi makineye takilmamis) ayrica isaretlenir.
++  const rmIdler = birimler.rows.filter((b) => b.tip === "RM").map((b) => b.id);
++  if (rmIdler.length) {
++    const g = await c.query(
++      `SELECT g.birim_id, ie.no, g.baglama_miktari, g.tuketilen, g.cikarma_zamani
++         FROM is_emri_baglama g JOIN is_emri ie ON ie.id = g.is_emri_id
++        WHERE g.birim_id = ANY($1::uuid[]) AND g.is_emri_id = ANY($2::uuid[])`,
++      [rmIdler, ieIdler],
++    );
++    for (const d of dugumler) {
++      if (d.tur !== "RM") continue;
++      const k = g.rows.filter((x) => x.birim_id === d.id);
++      d.kullanim = k.map((x) => ({
++        isEmriNo: x.no,
++        miktar: x.cikarma_zamani ? Number(x.tuketilen) : Number(x.baglama_miktari),
++        aktif: !x.cikarma_zamani,
++      }));
++      d.buIseGiden = k.length ? yuvarla(d.kullanim.reduce((t, x) => t + x.miktar, 0)) : null;
++      d.sadeceKaynak = !k.length && birimler.rows.some((y) => y.kaynak_birim_id === d.id);
++    }
++  }
++
++  // Parca kutulari: basina gelenlerin tek satirlik ozeti ve su anki hali
++  const { yolculuklar } = require("./hikaye");
++  const yol = await yolculuklar(c, F, birimler.rows.filter((b) => ["FG", "KR", "RM", "FG_LOT"].includes(b.tip)));
++  for (const d of dugumler) {
++    if (yol[d.id]) {
++      d.yolculuk = yol[d.id].ozet;
++      d.simdi = yol[d.id].simdi;
++    }
++  }
++
+   // Sevkiyat dugumleri ("Kime gitti?")
+   const sv = await c.query(
+     `SELECT ss.birim_id, s.id, s.no, s.durum, s.onay_zamani, s.irsaliye_no, mu.unvan AS musteri
+diff --git a/frontend/src/components/izle/AkisDiyagrami.tsx b/frontend/src/components/izle/AkisDiyagrami.tsx
+index 4a644b4d..0b28998c 100644
+--- a/frontend/src/components/izle/AkisDiyagrami.tsx
++++ b/frontend/src/components/izle/AkisDiyagrami.tsx
+@@ -270,8 +270,28 @@ const Kutu = forwardRef<
+   { d: Dugum; soluk: boolean; secili: boolean; onClick: () => void; onEnter: () => void }
+ >(function Kutu({ d, soluk, secili, onClick, onEnter }, ref) {
+   const Ikon = TUR_IKON[d.tur] || Package;
+-  const miktar = d.tur === "IS_EMRI" || d.tur === "SEVKIYAT" ? null : `${sayi(d.ilkMiktar)} ${d.olcuBirimi}`;
++  // Hammadde kutusunda ilk miktar degil, bu agactaki is emrine giden miktar yazar (25 kg bobinden 7 kg kullanildiysa "7 kg")
++  const miktar =
++    d.tur === "IS_EMRI" || d.tur === "SEVKIYAT"
++      ? null
++      : d.tur === "RM" && d.buIseGiden != null
++        ? `${sayi(d.buIseGiden)} ${d.olcuBirimi}`
++        : d.tur === "RM" && d.sadeceKaynak
++          ? null
++          : `${sayi(d.ilkMiktar)} ${d.olcuBirimi}`;
++  const miktarAlt =
++    d.tur === "RM" && d.buIseGiden != null
++      ? d.kullanim?.some((x: any) => x.aktif)
++        ? "makinede"
++        : `bu işe giden · ${sayi(d.ilkMiktar)} ${d.olcuBirimi} bobinden`
++      : null;
+   const alt = d.tur === "IS_EMRI" ? tr(d.operatorler || d.altBaslik) : tr(d.altBaslik);
++  const durumYazisi =
++    d.tur === "SEVKIYAT"
++      ? tr(d.musteri)
++      : d.tur === "RM" && d.sadeceKaynak
++        ? "Bu işe takılmadı; bir kısmı ayrılıp kullanıldı"
++        : d.simdi || (d.durum ? durumAdi(d.durum) : alt);
+   return (
+     <button
+       ref={ref}
+@@ -284,6 +304,7 @@ const Kutu = forwardRef<
+         secili ? "border-murekkep shadow-md" : "border-tas-200 hover:border-tas-400 hover:shadow-sm",
+         d.baslangic && "ring-2 ring-unity ring-offset-2",
+         soluk && "opacity-30",
++        !soluk && d.sadeceKaynak && "opacity-60",
+       )}
+     >
+       <span className={cn("w-1.5 shrink-0", RENK_SERIT[d.renk] || "bg-tas-300")} />
+@@ -293,11 +314,21 @@ const Kutu = forwardRef<
+           <span className="block truncate font-mono text-[12px] font-semibold text-murekkep">
+             {d.baslik}
+           </span>
+-          <span className="block truncate text-[11px] text-tas-500">
+-            {d.tur === "SEVKIYAT" ? tr(d.musteri) : d.durum ? durumAdi(d.durum) : alt}
++          <span className="block truncate text-[11px] text-tas-500" title={durumYazisi}>
++            {durumYazisi}
+           </span>
++          {d.yolculuk && ["FG", "KR"].includes(d.tur) && (
++            <span className="mt-0.5 block truncate text-[10px] text-tas-400" title={d.yolculuk}>
++              {d.yolculuk}
++            </span>
++          )}
+         </span>
+-        {miktar && <span className="sayi shrink-0 text-[11px] font-semibold text-tas-600">{miktar}</span>}
++        {miktar && (
++          <span className="shrink-0 text-right">
++            <span className="sayi block text-[11px] font-semibold text-tas-600">{miktar}</span>
++            {miktarAlt && <span className="block text-[9px] text-tas-400">{miktarAlt}</span>}
++          </span>
++        )}
+       </span>
+       {d.bloke && <span className="absolute right-1 top-1 rounded bg-dikkat px-1 text-[9px] font-bold text-white">BLOKE</span>}
+     </button>
+diff --git a/frontend/src/components/izle/MiktarDengesi.tsx b/frontend/src/components/izle/MiktarDengesi.tsx
+index 59e64ce6..83bc63bf 100644
+--- a/frontend/src/components/izle/MiktarDengesi.tsx
++++ b/frontend/src/components/izle/MiktarDengesi.tsx
+@@ -1,12 +1,12 @@
+-// Miktar dengesi: ne kadari kullanildi, ne kadari urune donustu, ne kadari copu, ne kadari karantinada,
+-// karantinadan sonra ne karar verildi. Hammadde lotu icin backend'in bakiye kartini, uretim lotu icin
+-// soy agacindaki parcalari kullanir.
+-import { useQuery } from "@tanstack/react-query";
+-import { CheckCircle2, Loader2, TriangleAlert } from "lucide-react";
+-import { api, hataMesaji } from "@/lib/api";
++// Miktar dengesi: sayilarin hepsi backend'in tek hesabindan gelir (GET /izlenebilirlik/:barkod/ozet, services/hikaye.js).
++// Ekran hesap yapmaz; boylece akis diyagrami, ozet ve bu sekme ayni sayiyi gosterir.
++//   1) Bu top ne oldu: giris (top + makine basinda ayrilan karantina) = dagilim, renkli cubuk
++//   2) Parca parca: her makaranin basina gelenler ve su anki hali
++//   3) Bu topu ureten is emri: hangi bobinden ne kadar kullanildi, receteye gore ne cikmaliydi
++//   4) Hammadde partisinin tamami: bobin bobin (partinin diger islere giden kismi da gorunur, ayri baslikla)
++import { CheckCircle2, CornerDownRight, TriangleAlert } from "lucide-react";
+ import { cn } from "@/lib/utils";
+-import { durumAdi, sayi, tarihSaat, tr } from "@/lib/sozluk";
+-import type { Bag, Dugum } from "./AkisDiyagrami";
++import { durumAdi, sayi, tr } from "@/lib/sozluk";
+ 
+ type Dilim = { ad: string; deger: number; renk: string; aciklama?: string };
+ 
+@@ -18,14 +18,14 @@ function Cubuk({ dilimler, toplam, birim }: { dilimler: Dilim[]; toplam: number;
+         {gorunen.map((d) => (
+           <div
+             key={d.ad}
+-            className={cn("h-full border-r-2 border-white transition-all last:border-r-0", d.renk)}
++            className={cn("h-full border-r-2 border-white last:border-r-0", d.renk)}
+             style={{ width: `${Math.max(0.8, (d.deger / (toplam || 1)) * 100)}%` }}
+             title={`${d.ad}: ${sayi(d.deger)} ${birim}`}
+           />
+         ))}
+       </div>
+       <ul className="mt-4 grid gap-x-8 gap-y-2.5 sm:grid-cols-2">
+-        {dilimler.map((d) => (
++        {gorunen.map((d) => (
+           <li key={d.ad} className="flex items-start gap-2.5 text-sm">
+             <span className={cn("mt-1 h-3 w-3 shrink-0 rounded-sm", d.renk)} />
+             <span className="min-w-0 flex-1">
+@@ -33,7 +33,6 @@ function Cubuk({ dilimler, toplam, birim }: { dilimler: Dilim[]; toplam: number;
+                 <span className="text-tas-600">{d.ad}</span>
+                 <span className="sayi whitespace-nowrap font-semibold text-murekkep">
+                   {sayi(d.deger)} {birim}
+-                  <span className="ml-1.5 text-xs font-normal text-tas-400">%{sayi(toplam ? (d.deger / toplam) * 100 : 0, 1)}</span>
+                 </span>
+               </span>
+               {d.aciklama && <span className="block text-[11px] leading-snug text-tas-400">{d.aciklama}</span>}
+@@ -50,231 +49,328 @@ function Kart({ ust, baslik, alt, children }: { ust: string; baslik: string; alt
+     <section className="rounded-2xl border border-tas-200 bg-white p-6">
+       <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-unity">{ust}</div>
+       <h3 className="mt-0.5 font-mono text-xl font-bold text-murekkep">{baslik}</h3>
+-      {alt && <p className="text-sm text-tas-500">{alt}</p>}
++      {alt && <p className="mt-0.5 text-sm text-tas-500">{alt}</p>}
+       <div className="mt-5">{children}</div>
+     </section>
+   );
+ }
+ 
+-const KARAR_RENK: Record<string, string> = {
+-  OLUMLU: "bg-uygun-acik text-uygun",
+-  SARTLI_KABUL: "bg-dikkat-acik text-dikkat",
+-  HURDA: "bg-unity-acik text-unity-koyu",
+-  KARAR_BEKLIYOR: "bg-dikkat-acik text-dikkat",
+-  YENIDEN_ISLEME: "bg-dikkat-acik text-dikkat",
+-};
+-
+-function KarantinaKararlari({ satirlar, onBarkod }: { satirlar: any[]; onBarkod?: (b: string) => void }) {
+-  if (!satirlar.length) return <p className="text-sm text-tas-400">Bu üretimden karantinaya ayrılan parça yok.</p>;
++function Kontrol({ tutuyor, metin }: { tutuyor: boolean; metin: string }) {
+   return (
+-    <div className="overflow-x-auto">
+-      <table className="w-full min-w-[640px] text-sm">
+-        <thead>
+-          <tr className="border-b border-tas-200 text-left text-[11px] uppercase tracking-wider text-tas-400">
+-            <th className="py-2 pr-3 font-semibold">Karantina barkodu</th>
+-            <th className="py-2 pr-3 font-semibold">Miktar</th>
+-            <th className="py-2 pr-3 font-semibold">Neden</th>
+-            <th className="py-2 pr-3 font-semibold">Karar</th>
+-            <th className="py-2 pr-3 font-semibold">Kim / ne zaman</th>
+-            <th className="py-2 font-semibold">Sonra</th>
+-          </tr>
+-        </thead>
+-        <tbody>
+-          {satirlar.map((k) => (
+-            <tr key={k.barkod} className="border-b border-tas-100 last:border-0">
+-              <td className="py-2.5 pr-3">
+-                <button onClick={() => onBarkod?.(k.barkod)} className="font-mono text-xs font-semibold text-murekkep hover:text-unity">
+-                  {k.barkod}
+-                </button>
+-              </td>
+-              <td className="sayi py-2.5 pr-3">
+-                {sayi(k.ilkMiktar)} {k.olcuBirimi}
+-              </td>
+-              <td className="py-2.5 pr-3 text-tas-600">
+-                <span className="font-mono text-xs text-tas-400">{k.ek?.hataKodu}</span> {tr(k.ek?.hataAciklama)}
+-              </td>
+-              <td className="py-2.5 pr-3">
+-                <span className={cn("rounded-md px-2 py-0.5 text-xs font-semibold", KARAR_RENK[k.durum] || "bg-tas-100 text-tas-600")}>
+-                  {durumAdi(k.durum)}
+-                </span>
+-                {k.kararNotu && <div className="mt-0.5 text-[11px] text-tas-400">“{tr(k.kararNotu)}”</div>}
+-              </td>
+-              <td className="py-2.5 pr-3 text-xs text-tas-500">
+-                {k.kararVeren ? (
+-                  <>
+-                    {tr(k.kararVeren)}
+-                    <br />
+-                    {tarihSaat(k.kararZamani)}
+-                  </>
+-                ) : (
+-                  "Henüz karar verilmedi"
+-                )}
+-              </td>
+-              <td className="py-2.5 text-xs">
+-                {k.yeniBarkod ? (
+-                  <button onClick={() => onBarkod?.(k.yeniBarkod)} className="font-mono font-semibold text-uygun hover:underline">
+-                    → {k.yeniBarkod}
+-                  </button>
+-                ) : k.durum === "HURDA" ? (
+-                  <span className="text-unity">Hurdaya ayrıldı</span>
+-                ) : (
+-                  <span className="text-tas-400">—</span>
+-                )}
+-              </td>
+-            </tr>
+-          ))}
+-        </tbody>
+-      </table>
++    <div className={cn("mt-5 flex items-center gap-2 rounded-lg px-3 py-2 text-xs", tutuyor ? "bg-uygun-acik text-uygun" : "bg-unity-acik text-unity-koyu")}>
++      {tutuyor ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <TriangleAlert className="h-4 w-4 shrink-0" />}
++      {metin}
+     </div>
+   );
+ }
+ 
+-export function HammaddeBakiye({ lotNo, onBarkod }: { lotNo: string; onBarkod?: (b: string) => void }) {
+-  const s = useQuery({ queryKey: ["bakiye", lotNo], queryFn: () => api<any>(`/hammadde/lotlar/${encodeURIComponent(lotNo)}/bakiye`) });
+-  if (s.isLoading) return <Loader2 className="mx-auto my-8 h-6 w-6 animate-spin text-tas-400" />;
+-  if (s.isError) return <p className="text-sm text-unity">{hataMesaji(s.error, "Bakiye yüklenemedi.")}</p>;
+-  const { lot, bakiye: b, karantinaKararlari } = s.data;
+-  const t = b.tuketilenDagilimi;
++function Barkod({ b, onBarkod }: { b: string; onBarkod?: (b: string) => void }) {
++  return (
++    <button onClick={() => onBarkod?.(b)} className="font-mono text-xs font-semibold text-murekkep hover:text-unity">
++      {b}
++    </button>
++  );
++}
++
++// 1-3: uretim lotu (top)
++export function UretimLotuOzeti({ u, onBarkod }: { u: any; onBarkod?: (b: string) => void }) {
++  const d = u.denge;
++  const g = d.dagilim;
++  const b = u.birim || "m";
++  const hurdaAciklama = [
++    d.kesimFiresi ? `${sayi(d.kesimFiresi)} kesim firesi` : "",
++    d.ret ? `${sayi(d.ret)} reddedilen makara` : "",
++    d.topHurda ? `${sayi(d.topHurda)} top hurdası` : "",
++    d.karantinaHurda ? `${sayi(d.karantinaHurda)} karantinadan hurdaya` : "",
++  ]
++    .filter(Boolean)
++    .join(", ");
+   const dilimler: Dilim[] = [
+-    { ad: "Uygun ürüne dönüştü", deger: t.uygunUrun, renk: "bg-uygun", aciklama: "Kalite onaylı makaralara giden miktar" },
+-    { ad: "Karantinada (karar bekliyor)", deger: t.karantinada, renk: "bg-dikkat" },
+-    { ad: "Hurda / fire", deger: t.hurda + b.dogrudanHurda, renk: "bg-unity", aciklama: "Kesim firesi, hurda kararı verilen karantina, reddedilen" },
+-    { ad: "Kesim bekleyen top", deger: t.kesimBekleyen, renk: "bg-murekkep" },
+-    {
+-      ad: "Üretimde açıklanamayan fark",
+-      deger: Math.max(0, t.aciklanamayan),
+-      renk: "bg-[repeating-linear-gradient(-45deg,#a8a29b_0_4px,#cfcac4_4px_8px)]",
+-      aciklama: "Tüketilen ile ürüne dönüşen arasındaki fark (proses kaybı, reçete farkı)",
+-    },
+-    { ad: "Makine başında (hatta)", deger: b.hatta, renk: "bg-sky-600" },
+-    { ad: "Depoda, kullanılabilir", deger: b.depodaKullanilabilir, renk: "bg-tas-300" },
+-    { ad: "Depoda, kontrol / karantina", deger: b.depodaBekleyen, renk: "bg-dikkat/60" },
+-    { ad: "Reddedildi (tedarikçiye)", deger: b.ret, renk: "bg-unity-koyu" },
++    { ad: "Müşteriye gitti", deger: d.sevkEdilen, renk: "bg-violet-600" },
++    { ad: "Depoda, kullanılabilir", deger: d.stokta, renk: "bg-uygun" },
++    { ad: "Sevkiyata ayrıldı (henüz gönderilmedi)", deger: d.sevkeAyrilan || 0, renk: "bg-violet-300" },
++    { ad: "Depoda ama bloke (sevk edilemez)", deger: d.blokeMiktar, renk: "bg-dikkat" },
++    { ad: "Son kontrol bekliyor", deger: g.kaliteBekleyen, renk: "bg-sky-600" },
++    { ad: "Karantinada (kalite kararı bekliyor)", deger: g.parcaKarantinada + g.karantinaBekleyen, renk: "bg-amber-300" },
++    { ad: "Şahit numune (arşivde)", deger: g.numune, renk: "bg-tas-400" },
++    { ad: "Henüz kesilmedi", deger: g.kesilmemis, renk: "bg-murekkep" },
++    { ad: "Hurda", deger: g.hurda, renk: "bg-unity", aciklama: hurdaAciklama },
+   ];
++  const ie = u.isEmri;
++  const ied = ie?.denge;
++  const yapraklar = u.parcalar as any[];
++  // Kok parcalar: topun kesiminden cikanlar. Karantinadan (KR) gelen parcalar kendi karantina satirinin altinda gosterilir.
++  const krBarkodlari = new Set((u.karantina as any[]).map((k) => k.barkod));
++  const kok = yapraklar.filter((p) => !p.kaynak || (!krBarkodlari.has(p.kaynak) && !yapraklar.some((y) => y.barkod === p.kaynak)));
++  const cocuklari = (x: string) => yapraklar.filter((p) => p.kaynak === x);
++
+   return (
+     <div className="space-y-5">
+       <Kart
+-        ust="Hammadde lotu · ne kadarı nereye gitti?"
+-        baslik={lot.no}
+-        alt={`${lot.malzemeKod} ${tr(lot.malzemeAd)} · ${tr(lot.tedarikci) || "-"} (tedarikçi lotu ${lot.tedarikciLot || "-"})`}
++        ust="Bu top · ne oldu?"
++        baslik={u.topBarkod}
++        alt={`${tr(u.urun)} · ${sayi(d.topMetraji)} ${b} top${d.karantina ? ` + top bitmeden makine başında ayrılan ${sayi(d.karantina)} ${b} karantina = ${sayi(d.toplam)} ${b}` : ""}`}
+       >
+-        <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+-          <Ozet ad="Giriş" deger={`${sayi(b.giris)} ${b.olcuBirimi}`} />
+-          <Ozet ad="Üretimde tüketilen" deger={`${sayi(b.tuketilen)} ${b.olcuBirimi}`} />
+-          <Ozet ad="Depoda kalan" deger={`${sayi(b.depodaKullanilabilir + b.depodaBekleyen)} ${b.olcuBirimi}`} />
+-          <Ozet ad="Hurda / fire" deger={`${sayi(t.hurda + b.dogrudanHurda)} ${b.olcuBirimi}`} vurgu />
+-        </div>
+-        <Cubuk dilimler={dilimler} toplam={b.giris} birim={b.olcuBirimi} />
+-        <div
+-          className={cn(
+-            "mt-5 flex items-center gap-2 rounded-lg px-3 py-2 text-xs",
+-            b.kontrol.tutuyor ? "bg-uygun-acik text-uygun" : "bg-unity-acik text-unity-koyu",
+-          )}
+-        >
+-          {b.kontrol.tutuyor ? <CheckCircle2 className="h-4 w-4" /> : <TriangleAlert className="h-4 w-4" />}
+-          {b.kontrol.tutuyor
+-            ? "Miktar dengesi tutuyor: giriş = depoda + hatta + tüketilen + hurda"
+-            : `Miktar dengesi tutmuyor: ${sayi(b.kontrol.fark)} ${b.olcuBirimi} fark var`}
+-          {t.tahmini && <span className="ml-auto opacity-70">Birden fazla lot karıştığı için dağılım tahminidir</span>}
+-        </div>
++        <Cubuk dilimler={dilimler} toplam={d.dagilimToplam || d.toplam} birim={b} />
++        <Kontrol
++          tutuyor={d.tutuyor}
++          metin={
++            d.tutuyor
++              ? `Denge tutuyor: giren ${sayi(d.toplam)} ${b}${d.olcumFazlasi ? ` (+ kesimde ${sayi(d.olcumFazlasi)} ${b} ölçüm farkı)` : ""} = yukarıdaki dağılımın toplamı ${sayi(d.dagilimToplam)} ${b}`
++              : `Denge tutmuyor: ${sayi(d.fark)} ${b} fark var`
++          }
++        />
+       </Kart>
+-      <Kart ust="Karantina · ne karar verildi?" baslik={`${karantinaKararlari.length} parça`} alt="Bu hammaddeyle üretilenlerden karantinaya ayrılanlar">
+-        <KarantinaKararlari satirlar={karantinaKararlari} onBarkod={onBarkod} />
++
++      <Kart ust="Parça parça · her makaranın başına gelenler" baslik={`${kok.length + u.karantina.length + u.numune.length} kayıt`}>
++        <div className="overflow-x-auto">
++          <table className="w-full min-w-[720px] text-sm">
++            <thead>
++              <tr className="border-b border-tas-200 text-left text-[11px] uppercase tracking-wider text-tas-400">
++                <th className="py-2 pr-3 font-semibold">Barkod</th>
++                <th className="py-2 pr-3 text-right font-semibold">Metre</th>
++                <th className="py-2 pr-3 font-semibold">Şu an</th>
++                <th className="py-2 font-semibold">Başına gelenler</th>
++              </tr>
++            </thead>
++            <tbody>
++              {kok.map((p) => (
++                <ParcaSatirlari key={p.barkod} p={p} cocuklari={cocuklari} b={b} onBarkod={onBarkod} />
++              ))}
++              {u.karantina.map((k: any) => (
++                <KarantinaSatiri key={k.barkod} k={k} b={b} onBarkod={onBarkod}>
++                  {cocuklari(k.barkod).map((c) => (
++                    <ParcaSatirlari key={c.barkod} p={c} cocuklari={cocuklari} b={b} onBarkod={onBarkod} girinti={1} />
++                  ))}
++                </KarantinaSatiri>
++              ))}
++              {u.numune.map((n: any) => (
++                <tr key={n.barkod} className="border-b border-tas-100 last:border-0">
++                  <td className="py-2.5 pr-3">
++                    <Barkod b={n.barkod} onBarkod={onBarkod} />
++                  </td>
++                  <td className="sayi py-2.5 pr-3 text-right">
++                    {sayi(n.metre)} {b}
++                  </td>
++                  <td className="py-2.5 pr-3 text-tas-600">Şahit numune, arşivde{n.yer ? ` (${n.yer})` : ""}</td>
++                  <td className="py-2.5 text-xs text-tas-500">Topun kendisinden alındı, topun metresinden düştü</td>
++                </tr>
++              ))}
++            </tbody>
++          </table>
++        </div>
+       </Kart>
++
++      {ie && (
++        <Kart
++          ust="Bu topu üreten iş emri"
++          baslik={ie.no}
++          alt={`${ie.makine}${ie.operatorler ? ` · ${tr(ie.operatorler)}` : ""}${ie.musteri ? ` · ${tr(ie.musteri)}` : ""} · hedef ${sayi(ie.hedef)} ${b} · ${durumAdi(ie.durum)}`}
++        >
++          <div className="overflow-x-auto">
++            <table className="w-full min-w-[640px] text-sm">
++              <thead>
++                <tr className="border-b border-tas-200 text-left text-[11px] uppercase tracking-wider text-tas-400">
++                  <th className="py-2 pr-3 font-semibold">Makineye takılan bobin</th>
++                  <th className="py-2 pr-3 font-semibold">Tedarikçi partisi</th>
++                  <th className="py-2 pr-3 text-right font-semibold">Takılan</th>
++                  <th className="py-2 pr-3 text-right font-semibold">Depoya dönen</th>
++                  <th className="py-2 text-right font-semibold">Bu işte kullanılan</th>
++                </tr>
++              </thead>
++              <tbody>
++                {ie.bobinler.map((x: any) => (
++                  <tr key={x.barkod} className="border-b border-tas-100 last:border-0">
++                    <td className="py-2.5 pr-3">
++                      <Barkod b={x.barkod} onBarkod={onBarkod} />
++                      <span className="ml-2 text-[11px] text-tas-400">{x.malzeme}</span>
++                    </td>
++                    <td className="py-2.5 pr-3 text-xs text-tas-600">
++                      {tr(x.tedarikci)} · {x.tedarikciLot || "-"}
++                    </td>
++                    <td className="sayi py-2.5 pr-3 text-right">
++                      {sayi(x.takilan)} {x.birim}
++                    </td>
++                    <td className="sayi py-2.5 pr-3 text-right">{x.iade === null ? "—" : `${sayi(x.iade)} ${x.birim}`}</td>
++                    <td className="sayi py-2.5 text-right font-semibold">{x.kullanilan === null ? "makinede" : `${sayi(x.kullanilan)} ${x.birim}`}</td>
++                  </tr>
++                ))}
++              </tbody>
++            </table>
++          </div>
++          {ied ? (
++            <div className="mt-4 space-y-1 rounded-lg bg-tas-50 px-4 py-3 text-sm text-tas-600 ring-1 ring-tas-100">
++              {(ied.kalemler || []).map((k: any) => (
++                <div key={k.malzeme}>
++                  {k.malzeme}: {sayi(k.tuketilenKg, 3)} kg kullanıldı ÷ reçetede {k.gramMetre} g/m = <b className="text-murekkep">{sayi(k.beklenenMetraj)} {b} çıkmalıydı</b>
++                </div>
++              ))}
++              <div>
++                Çıkan: {ie.ciktilar.map((x: any) => `${x.barkod} ${sayi(x.metre)} ${b}${x.tip === "KR" ? " (karantina)" : ""}`).join(" + ")} ={" "}
++                <b className="text-murekkep">
++                  {sayi(ied.uretilenToplam)} {b}
++                </b>
++              </div>
++              <div className={cn("font-semibold", ied.toleransAsildi ? "text-unity" : "text-uygun")}>
++                Fark: {sayi(ied.fark)} {b} (%{sayi(ied.farkYuzde)}) · tolerans %{sayi(ied.toleransYuzde)}
++                {ied.toleransAsildi ? " · tolerans aşıldı, şef açıklaması gerekti" : " · tolerans içinde"}
++              </div>
++              {ied.farkAciklamasi && <div className="text-tas-500">Şefin açıklaması: “{tr(ied.farkAciklamasi)}”</div>}
++            </div>
++          ) : (
++            <p className="mt-4 text-sm text-tas-400">İş emri bitmediği için malzeme dengesi henüz hesaplanmadı.</p>
++          )}
++        </Kart>
++      )}
+     </div>
+   );
+ }
+ 
+-function Ozet({ ad, deger, vurgu }: { ad: string; deger: string; vurgu?: boolean }) {
++function KarantinaSatiri({ k, b, onBarkod, children }: { k: any; b: string; onBarkod?: (b: string) => void; children?: React.ReactNode }) {
+   return (
+-    <div className="rounded-xl bg-tas-50 px-4 py-3 ring-1 ring-tas-100">
+-      <div className="text-xs text-tas-500">{ad}</div>
+-      <div className={cn("sayi mt-0.5 font-display text-2xl font-bold", vurgu ? "text-unity" : "text-murekkep")}>{deger}</div>
+-    </div>
++    <>
++      <tr className="border-b border-tas-100 bg-amber-50/40 last:border-0">
++        <td className="py-2.5 pr-3">
++          <Barkod b={k.barkod} onBarkod={onBarkod} />
++          <div className="text-[11px] text-tas-400">
++            makine başında ayrıldı · {k.hataKodu} {tr(k.neden)}
++          </div>
++        </td>
++        <td className="sayi py-2.5 pr-3 text-right">
++          {sayi(k.metre)} {b}
++        </td>
++        <td className="py-2.5 pr-3 text-tas-600">{k.simdi || durumAdi(k.durum)}</td>
++        <td className="py-2.5 text-xs text-tas-500">{k.ozet || "—"}</td>
++      </tr>
++      {children}
++    </>
+   );
+ }
+ 
+-// Uretim lotunun (top) dokumu: soy agacindaki parcalardan hesaplanir
+-export function UretimLotuDokumu({
+-  lot,
+-  dugumler,
+-  baglar,
+-  olaylar,
+-  onBarkod,
+-}: {
+-  lot: Dugum;
+-  dugumler: Dugum[];
+-  baglar: Bag[];
+-  olaylar: any[];
+-  onBarkod?: (b: string) => void;
+-}) {
+-  const ayni = dugumler.filter((d) => d.lotNo === lot.lotNo && d.id !== lot.id);
+-  const krdenGelen = new Set(baglar.filter((b) => b.tip === "YENIDEN_ETIKET").map((b) => b.hedef));
+-  const fg = ayni.filter((d) => d.tur === "FG" && !krdenGelen.has(d.id));
+-  const kr = ayni.filter((d) => d.tur === "KR");
+-  const nm = ayni.filter((d) => d.tur === "NM");
+-  const top = (l: Dugum[]) => l.reduce((t, d) => t + (d.ilkMiktar || 0), 0);
+-  const fire = olaylar.filter((o) => o.tip === "HURDA" && o.barkod === lot.baslik).reduce((t, o) => t + (o.miktar || 0), 0);
+-  const sevk = fg.filter((d) => d.durum === "SEVK_EDILDI");
+-  const stok = fg.filter((d) => ["SERBEST", "DEPODA", "SIPARISE_AYRILDI"].includes(d.durum!));
+-  const bekleyen = fg.filter((d) => d.durum === "KALITE_BEKLIYOR");
+-  const red = fg.filter((d) => ["RET", "HURDA"].includes(d.durum!));
+-  const b = lot.olcuBirimi || "m";
++function ParcaSatirlari({ p, cocuklari, b, onBarkod, girinti = 0 }: { p: any; cocuklari: (x: string) => any[]; b: string; onBarkod?: (b: string) => void; girinti?: number }) {
++  const alt = cocuklari(p.barkod);
++  return (
++    <>
++      <tr className={cn("border-b border-tas-100 last:border-0", p.durum === "BOLUNDU" && "text-tas-400")}>
++        <td className="py-2.5 pr-3" style={{ paddingLeft: girinti * 18 }}>
++          <span className="flex items-center gap-1">
++            {girinti > 0 && <CornerDownRight className="h-3 w-3 text-tas-400" />}
++            <Barkod b={p.barkod} onBarkod={onBarkod} />
++            {p.bloke && <span className="rounded bg-dikkat px-1 text-[9px] font-bold text-white">BLOKE</span>}
++          </span>
++        </td>
++        <td className="sayi py-2.5 pr-3 text-right">
++          {sayi(p.metre)} {b}
++        </td>
++        <td className="py-2.5 pr-3 text-tas-600">{p.simdi || durumAdi(p.durum)}</td>
++        <td className="py-2.5 text-xs text-tas-500">{p.ozet || "—"}</td>
++      </tr>
++      {alt.map((c) => (
++        <ParcaSatirlari key={c.barkod} p={c} cocuklari={cocuklari} b={b} onBarkod={onBarkod} girinti={girinti + 1} />
++      ))}
++    </>
++  );
++}
+ 
+-  const kararlar = kr.map((k) => {
+-    const karar = [...olaylar].reverse().find((o) => o.tip === "KARANTINA_KARARI" && o.barkod === k.baslik);
+-    return {
+-      barkod: k.baslik,
+-      ilkMiktar: k.ilkMiktar,
+-      olcuBirimi: k.olcuBirimi,
+-      durum: k.durum,
+-      ek: k.ek,
+-      kararVeren: karar?.kullanici,
+-      kararZamani: karar?.zaman,
+-      kararNotu: karar?.aciklama,
+-      yeniBarkod: karar?.veri?.yeniBarkod,
+-    };
+-  });
++// 4: hammadde partisi, bobin bobin
++export function HammaddePartisi({ h, kaynakOlarak, onBarkod }: { h: any; kaynakOlarak?: boolean; onBarkod?: (b: string) => void }) {
++  const br = h.birim || "kg";
++  return (
++    <Kart
++      ust={kaynakOlarak ? "Hammadde partisinin tamamı · bu topa giden kısmı yukarıdaki iş emri tablosunda" : "Hammadde partisi · bobin bobin ne oldu?"}
++      baslik={h.lotNo}
++      alt={`${h.malzeme} · ${tr(h.tedarikci) || "-"} (parti ${h.tedarikciLot || "-"}) · ${durumAdi(h.durum)}`}
++    >
++      <div className="mb-4 space-y-1 text-sm text-tas-600">
++        {h.cumleler.map((c: string) => (
++          <p key={c}>{c}</p>
++        ))}
++      </div>
++      <div className="overflow-x-auto">
++        <table className="w-full min-w-[760px] text-sm">
++          <thead>
++            <tr className="border-b border-tas-200 text-left text-[11px] uppercase tracking-wider text-tas-400">
++              <th className="py-2 pr-3 font-semibold">Ambalaj</th>
++              <th className="py-2 pr-3 text-right font-semibold">Geldi</th>
++              <th className="py-2 pr-3 font-semibold">Hangi işte kullanıldı</th>
++              <th className="py-2 pr-3 text-right font-semibold">Kullanılan</th>
++              <th className="py-2 pr-3 text-right font-semibold">Hurda</th>
++              <th className="py-2 pr-3 text-right font-semibold">Kalan</th>
++              <th className="py-2 font-semibold">Şu an</th>
++            </tr>
++          </thead>
++          <tbody>
++            {h.bobinler.map((x: any) => (
++              <tr key={x.barkod} className="border-b border-tas-100 last:border-0">
++                <td className="py-2.5 pr-3" style={{ paddingLeft: x.kaynak ? 18 : 0 }}>
++                  <span className="flex items-center gap-1">
++                    {x.kaynak && <CornerDownRight className="h-3 w-3 text-tas-400" />}
++                    <Barkod b={x.barkod} onBarkod={onBarkod} />
++                  </span>
++                  {x.kaynak && <div className="text-[11px] text-tas-400">{x.kaynak} ambalajından ayrıldı</div>}
++                  {x.ayrilan.length > 0 && (
++                    <div className="text-[11px] text-tas-400">{x.ayrilan.map((y: any) => `${sayi(y.miktar)} ${br} → ${y.barkod}`).join(", ")}</div>
++                  )}
++                </td>
++                <td className="sayi py-2.5 pr-3 text-right">
++                  {sayi(x.ilk)} {br}
++                </td>
++                <td className="py-2.5 pr-3 text-xs text-tas-600">
++                  {x.isler.length ? x.isler.map((y: any) => `${y.isEmriNo} (${y.makine})`).join(", ") : "—"}
++                </td>
++                <td className="sayi py-2.5 pr-3 text-right">{x.kullanilan ? `${sayi(x.kullanilan)} ${br}` : "—"}</td>
++                <td className="sayi py-2.5 pr-3 text-right">{x.hurda ? `${sayi(x.hurda)} ${br}` : "—"}</td>
++                <td className="sayi py-2.5 pr-3 text-right">{x.kalan ? `${sayi(x.kalan)} ${br}` : "—"}</td>
++                <td className="py-2.5 text-xs text-tas-600">{x.simdi || durumAdi(x.durum)}</td>
++              </tr>
++            ))}
++          </tbody>
++        </table>
++      </div>
++      <Kontrol
++        tutuyor={h.tutuyor}
++        metin={
++          h.tutuyor
++            ? `Denge tutuyor: gelen ${sayi(h.giris)} ${br} = kullanılan ${sayi(h.kullanilan)} + kalan ${sayi(h.kalan)}${h.hurda ? ` + hurda ${sayi(h.hurda)}` : ""} ${br}`
++            : "Denge tutmuyor: kayıtları kontrol edin"
++        }
++      />
++    </Kart>
++  );
++}
+ 
++// Sayfanin ustundeki duz cumleli ozet
++export function HikayeOzeti({ ozet, onBarkod }: { ozet: any; onBarkod?: (b: string) => void }) {
++  if (!ozet) return null;
++  const u = ozet.uretimLotlari?.[0];
++  const h = !u ? ozet.hammaddeLotlari?.[0] : null;
++  const odak = ozet.odak;
++  const parcaMi = odak && ["FG", "KR", "RM"].includes(odak.tip);
++  const cumleler: string[] = u ? u.cumleler : h ? h.cumleler : [];
++  if (!cumleler.length && !parcaMi) return null;
+   return (
+-    <div className="space-y-5">
+-      <Kart ust="Üretim lotu · bu toptan ne çıktı?" baslik={lot.baslik} alt={`${tr(lot.altBaslik)} · ${sayi(lot.ilkMiktar)} ${b} üretildi`}>
+-        <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+-          <Ozet ad="Üretilen top" deger={`${sayi(lot.ilkMiktar)} ${b}`} />
+-          <Ozet ad="Makaraya kesilen" deger={`${sayi(top(fg))} ${b}`} />
+-          <Ozet ad="Müşteriye giden" deger={`${sayi(top(sevk))} ${b}`} />
+-          <Ozet ad="Kesim firesi" deger={`${sayi(fire)} ${b}`} vurgu />
+-        </div>
+-        <Cubuk
+-          toplam={top(fg) + fire + (lot.miktar || 0)}
+-          birim={b}
+-          dilimler={[
+-            { ad: `Müşteriye sevk edildi (${sevk.length} makara)`, deger: top(sevk), renk: "bg-violet-600" },
+-            { ad: `Stokta, kullanılabilir (${stok.length} makara)`, deger: top(stok), renk: "bg-uygun" },
+-            { ad: `Kalite onayı bekliyor (${bekleyen.length})`, deger: top(bekleyen), renk: "bg-dikkat" },
+-            { ad: `Reddedildi (${red.length})`, deger: top(red), renk: "bg-unity-koyu" },
+-            { ad: "Kesim firesi (hurda)", deger: fire, renk: "bg-unity" },
+-            { ad: "Henüz kesilmemiş", deger: lot.miktar || 0, renk: "bg-murekkep" },
+-          ]}
+-        />
+-        <div className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
+-          <div className="rounded-lg bg-tas-50 px-4 py-3 ring-1 ring-tas-100">
+-            <div className="text-xs text-tas-500">Üretim sırasında karantinaya ayrılan</div>
+-            <div className="sayi font-semibold text-murekkep">
+-              {sayi(top(kr))} {b} · {kr.length} parça
+-            </div>
+-          </div>
+-          <div className="rounded-lg bg-tas-50 px-4 py-3 ring-1 ring-tas-100">
+-            <div className="text-xs text-tas-500">Numune (arşivde saklanıyor)</div>
+-            <div className="sayi font-semibold text-murekkep">
+-              {sayi(top(nm))} {b} · {nm.map((n) => n.baslik).join(", ") || "yok"}
+-            </div>
++    <section className="rounded-2xl border border-tas-200 bg-white p-5">
++      <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-unity">Kısaca ne oldu?</div>
++      {parcaMi && odak.ozet && (
++        <div className="mt-2 rounded-lg bg-tas-50 px-4 py-3 ring-1 ring-tas-100">
++          <div className="text-sm text-tas-500">
++            <button onClick={() => onBarkod?.(odak.barkod)} className="font-mono font-semibold text-murekkep">
++              {odak.barkod}
++            </button>{" "}
++            ({sayi(odak.metre)} {odak.birim}) sırasıyla:
+           </div>
++          <div className="mt-1 text-[15px] font-semibold text-murekkep">{odak.ozet}</div>
++          {odak.simdi && <div className="mt-1 text-sm text-tas-600">Şu an: {odak.simdi}</div>}
+         </div>
+-      </Kart>
+-      <Kart ust="Karantina · ne karar verildi?" baslik={`${kr.length} parça`} alt="Bu toptan karantinaya ayrılan parçalar ve verilen kararlar">
+-        <KarantinaKararlari satirlar={kararlar} onBarkod={onBarkod} />
+-      </Kart>
+-    </div>
++      )}
++      <ul className="mt-3 space-y-1.5 text-sm leading-relaxed text-tas-700">
++        {cumleler.map((c) => (
++          <li key={c} className="flex gap-2">
++            <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-unity" />
++            <span>{c}</span>
++          </li>
++        ))}
++      </ul>
++    </section>
+   );
+ }
+diff --git a/frontend/src/routes/_panel.izle.$barkod.tsx b/frontend/src/routes/_panel.izle.$barkod.tsx
+index 177e7668..0cbaf99b 100644
+--- a/frontend/src/routes/_panel.izle.$barkod.tsx
++++ b/frontend/src/routes/_panel.izle.$barkod.tsx
+@@ -2,7 +2,7 @@
+ // Akis diyagrami (soy agaci) + zaman cizelgesi + miktar dengesi + etiket (barkod ve QR).
+ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+ import { useQuery } from "@tanstack/react-query";
+-import { useEffect, useMemo, useState } from "react";
++import { useEffect, useState } from "react";
+ import { createPortal } from "react-dom";
+ import {
+   ArrowLeft,
+@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils";
+ import { BIRIM_TIPI, durumAdi, olayAdi, sayi, tarihSaat, tr, type Renk } from "@/lib/sozluk";
+ import { AkisDiyagrami, type Bag, type Dugum } from "@/components/izle/AkisDiyagrami";
+ import { ZamanCizelgesi, type Olay } from "@/components/izle/ZamanCizelgesi";
+-import { HammaddeBakiye, UretimLotuDokumu } from "@/components/izle/MiktarDengesi";
++import { HammaddePartisi, HikayeOzeti, UretimLotuOzeti } from "@/components/izle/MiktarDengesi";
+ import { BarkodArama } from "@/components/izle/BarkodArama";
+ import { EtiketOnizleme } from "@/components/barkod/Etiket";
+ import { Seritler } from "@/components/marka/Marka";
+@@ -77,6 +77,13 @@ function UrunHikayesi() {
+     enabled: agac.isSuccess,
+   });
+ 
++  // Duz cumleli ozet ve miktar dokumu: tek hesap (backend services/hikaye.js)
++  const ozet = useQuery({
++    queryKey: ["ozet", barkod],
++    queryFn: () => api<any>(`/izlenebilirlik/${encodeURIComponent(barkod)}/ozet`),
++    enabled: agac.isSuccess,
++  });
++
+   const dugumler = agac.data?.dugumler || [];
+   const baglar = agac.data?.baglar || [];
+   const olayListe = olaylar.data?.olaylar || [];
+@@ -88,8 +95,8 @@ function UrunHikayesi() {
+     else nav({ to: "/izle/$barkod", params: { barkod: b } });
+   };
+ 
+-  const rmLotlar = useMemo(() => [...new Set(dugumler.filter((d) => d.tur === "RM" && d.lotNo).map((d) => d.lotNo!))], [dugumler]);
+-  const fgLotlar = useMemo(() => dugumler.filter((d) => d.tur === "FG_LOT"), [dugumler]);
++  const uretimLotlari: any[] = ozet.data?.uretimLotlari || [];
++  const hammaddeLotlari: any[] = ozet.data?.hammaddeLotlari || [];
+ 
+   if (agac.isLoading) {
+     return (
+@@ -161,7 +168,7 @@ function UrunHikayesi() {
+           {b && (
+             <dl className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm sm:grid-cols-4">
+               <Bilgi ikon={Scale} ad="Miktar" deger={`${sayi(b.miktar)} / ${sayi(b.ilkMiktar)} ${b.olcuBirimi}`} alt="kalan / ilk" />
+-              <Bilgi ikon={MapPin} ad="Şu an nerede" deger={yerAdi(b.yer)} />
++              <Bilgi ikon={MapPin} ad="Şu an" deger={ozet.data?.odak?.simdi || yerAdi(b.yer)} />
+               <Bilgi ikon={Tag} ad="Lot" deger={b.lotNo || "—"} mono />
+               <Bilgi ikon={User} ad="Oluşturan" deger={tr(b.olusturanAd) || "—"} alt={tarihSaat(b.olusturmaZamani)} />
+             </dl>
+@@ -191,6 +198,12 @@ function UrunHikayesi() {
+       </header>
+ 
+       <div className="p-8">
++        {sekme !== "etiket" && ozet.data && (
++          <div className="mb-6 max-w-6xl">
++            <HikayeOzeti ozet={ozet.data} onBarkod={barkodaGit} />
++          </div>
++        )}
++
+         {sekme === "akis" && (
+           <div className="space-y-3">
+             <p className="text-sm text-tas-500">
+@@ -210,13 +223,17 @@ function UrunHikayesi() {
+ 
+         {sekme === "denge" && (
+           <div className="max-w-6xl space-y-6">
+-            {fgLotlar.map((l) => (
+-              <UretimLotuDokumu key={l.id} lot={l} dugumler={dugumler} baglar={baglar} olaylar={olayListe} onBarkod={barkodaGit} />
++            {ozet.isLoading && <Loader2 className="mx-auto my-8 h-6 w-6 animate-spin text-tas-400" />}
++            {ozet.isError && <p className="text-sm text-unity">{hataMesaji(ozet.error, "Miktar dengesi yüklenemedi.")}</p>}
++            {uretimLotlari.map((u) => (
++              <UretimLotuOzeti key={u.lotNo} u={u} onBarkod={barkodaGit} />
+             ))}
+-            {rmLotlar.map((l) => (
+-              <HammaddeBakiye key={l} lotNo={l} onBarkod={barkodaGit} />
++            {hammaddeLotlari.map((h) => (
++              <HammaddePartisi key={h.lotNo} h={h} kaynakOlarak={uretimLotlari.length > 0} onBarkod={barkodaGit} />
+             ))}
+-            {!fgLotlar.length && !rmLotlar.length && <p className="text-sm text-tas-400">Bu kayıt için miktar dengesi yok.</p>}
++            {ozet.isSuccess && !uretimLotlari.length && !hammaddeLotlari.length && (
++              <p className="text-sm text-tas-400">Bu kayıt için miktar dengesi yok.</p>
++            )}
+           </div>
+         )}
+ 
+diff --git a/frontend/src/routes/_panel.surec.tsx b/frontend/src/routes/_panel.surec.tsx
+index e19a29a3..01fe1fe8 100644
+--- a/frontend/src/routes/_panel.surec.tsx
++++ b/frontend/src/routes/_panel.surec.tsx
+@@ -1,17 +1,29 @@
+-// Surec akis semalari (ISO 9001 4.4): kim, hangi adimi, hangi kosulda yapar; bir onay eksikse sistem neyi durdurur.
+-// Ekrandaki her "engel" backend'de bir hata kodudur; kodlar parantez icinde.
+-import { createFileRoute } from "@tanstack/react-router";
+-import { ArrowDown, Lock } from "lucide-react";
++// Surec akislari (ISO 9001 4.4): her senaryoda kim, hangi ekranda, hangi dugmeye basar, ne yapar ve sistem neyi durdurur.
++// Yeni personel kendi rolunu secip yalnizca kendi adimlarini one cikarabilir. Her adimdaki ekran adina tiklayinca o ekran acilir.
++// Demo verisi yukluyse her senaryonun altinda "demoda gormek icin" baglantisi vardir (firma ayarlarindaki demo.ornekler).
++import { createFileRoute, Link } from "@tanstack/react-router";
++import { useState } from "react";
++import { ArrowDown, ExternalLink, Lock, PlayCircle } from "lucide-react";
+ import { PageHeader } from "@/components/iso/PageHeader";
+-import { Bolum } from "@/components/iso/FormParcalari";
+ import { cn } from "@/lib/utils";
++import { useOturum } from "@/lib/oturum";
++import { useTanimlar } from "@/lib/tanimlar";
+ 
+ export const Route = createFileRoute("/_panel/surec")({ component: Surec });
+ 
+-type Adim = { rol: string; ne: string; engel?: string; kayit?: string };
+-type Akis = { baslik: string; aciklama: string; adimlar: Adim[] };
++type RolAd = "Depo" | "Operatör" | "Üretim şefi" | "Kalite" | "Yönetim" | "Sistem" | "Bakım";
++type Adim = {
++  rol: RolAd;
++  ekran?: string; // menudeki ekran adi
++  yol?: string; // ekranin adresi
++  dugme?: string; // basilacak dugme
++  ne: string; // ne yapar, sade cumle
++  durdurur?: string; // sistem neyi engeller ve neden
++  kod?: string; // sistemin hata kodu (destek icin)
++};
++type Akis = { id: string; baslik: string; ozet: string; neZaman: string; demo?: string; demoAciklama?: string; adimlar: Adim[] };
+ 
+-const ROL_RENK: Record<string, string> = {
++const ROL_RENK: Record<RolAd, string> = {
+   Depo: "bg-[#e8f0fb] text-[#1d4f91]",
+   Kalite: "bg-uygun-acik text-uygun",
+   "Üretim şefi": "bg-dikkat-acik text-dikkat",
+@@ -20,106 +32,265 @@ const ROL_RENK: Record<string, string> = {
+   Yönetim: "bg-murekkep text-white",
+   Sistem: "bg-white text-murekkep border border-murekkep/30",
+ };
++const ROL_FILTRE: { ad: string; roller: RolAd[] }[] = [
++  { ad: "Herkes", roller: [] },
++  { ad: "Depo", roller: ["Depo"] },
++  { ad: "Operatör", roller: ["Operatör"] },
++  { ad: "Üretim şefi", roller: ["Üretim şefi", "Bakım"] },
++  { ad: "Kalite", roller: ["Kalite"] },
++  { ad: "Yönetim", roller: ["Yönetim"] },
++];
++const OTURUM_ROL: Record<string, string> = { DEPO: "Depo", OPERATOR: "Operatör", SEF: "Üretim şefi", KALITE: "Kalite", YONETIM: "Yönetim" };
+ 
+ const AKISLAR: Akis[] = [
+   {
+-    baslik: "1. Ana akış: mal kabulden sevkiyata",
+-    aciklama: "Her adım bir öncekinin onayına bağlıdır. Onay yoksa sistem bir sonraki adıma geçirmez.",
++    id: "anaAkis",
++    baslik: "1. Ana akış: malzemenin gelişinden müşteriye gidişine",
++    ozet: "Her adım bir öncekinin onayını bekler. Onay gelmeden sistem sonraki adıma izin vermez; böylece onaysız malzeme kullanılmaz, kontrol edilmemiş ürün müşteriye gitmez.",
++    neZaman: "Her üretimde",
++    demo: "anaAkis",
++    demoAciklama: "Sorunsuz bir işin bütün hikâyesi",
++    adimlar: [
++      { rol: "Depo", ekran: "Hammadde Giriş (F-01)", yol: "/tablo/hammadde", dugme: "Yeni Kayıt", ne: "Gelen malzemeyi, tedarikçiyi, tedarikçinin parti numarasını ve her ambalajın kilosunu girer. Her ambalaja ayrı etiket çıkar; etiketleri ambalajlara yapıştırır.", durdurur: "Askıya alınmış tedarikçiden mal kabul edilemez.", kod: "TEDARIKCI_ASKIDA" },
++      { rol: "Kalite", ekran: "Genel Bakış → bana atanan onaylar", yol: "/panel", ne: "Malzemeyi kontrol eder: kabul, karantina ya da ret.", durdurur: "Malı kabul eden depocu kendi kaydını onaylayamaz (dört göz kuralı)." },
++      { rol: "Üretim şefi", ekran: "Üretim Emri (F-02)", yol: "/tablo/uretim-emri", dugme: "Yeni Kayıt", ne: "Hangi makinede, hangi üründen, kaç metre üretileceğini girer ve onaylayacak kaliteciyi seçer. Sistem reçeteden ne kadar hammadde gerektiğini hemen hesaplar.", durdurur: "Ürünün reçetesi ve kontrol planı tanımlı değilse iş emri açılamaz.", kod: "URUN_KARTI_EKSIK" },
++      { rol: "Kalite", ekran: "Genel Bakış → bana atanan onaylar", yol: "/panel", ne: "İş emrini onaylar.", durdurur: "Onaylanmamış iş emri başlatılamaz. Onaydan sonra miktar ya da makine değişirse onay sıfırlanır.", kod: "ONAY_BEKLIYOR" },
++      { rol: "Depo", ekran: "Depo İşlemleri → Depodan çekiş", yol: "/depo", ne: "Bobini depodan alıp hatta götürür ve hangi iş için çektiğini okutur. Bobinin bir kısmı alınırsa sistem bobini böler, alınan kısma yeni etiket çıkar.", durdurur: "Kalitenin kabul etmediği malzeme depodan çekilemez.", kod: "ONAYSIZ_MALZEME" },
++      { rol: "Operatör", ekran: "Üretim Emri (F-02) → iş emrini aç", yol: "/tablo/uretim-emri", dugme: "Başlat, sonra Hammadde okut", ne: "İşi başlatır, makineye taktığı bobinleri okutur.", durdurur: "Makinede başka bir iş çalışıyorsa ikinci iş başlatılamaz.", kod: "MAKINE_DOLU" },
++      { rol: "Kalite", ekran: "Üretim Emri (F-02) → iş emri", yol: "/tablo/uretim-emri", dugme: "İlk parça kontrolü", ne: "Makineden çıkan ilk ürünü kontrol planındaki değerlerle ölçer. Uygunsa seri üretim başlar; değilse ayar düzeltilip tekrar ölçülür. İlk parça sadece işin başında istenir.", durdurur: "Kalibrasyonu geçmiş aletle ölçüm girilemez.", kod: "KALIBRASYON_GECMIS" },
++      { rol: "Operatör", ekran: "Üretim Emri (F-02) → iş emri", yol: "/tablo/uretim-emri", dugme: "Proses ölçümü / Karantinaya ayır", ne: "Üretim sürerken en geç 120 dakikada bir ölçüm girer. Sorunlu kısım çıkarsa keser, hata kodunu ve metresini yazıp karantina etiketi yapıştırır.", durdurur: "Ölçüm 120 dakikayı geçtiyse top kapatılamaz.", kod: "PROSES_OLCUM_GECIKTI" },
++      { rol: "Operatör", ekran: "Üretim Emri (F-02) → iş emri", yol: "/tablo/uretim-emri", dugme: "Topu bitir", ne: "Biten topun metresini yazar; sistem topa lot numarası verir ve etiketini çıkarır.", durdurur: "Makinedeki hammadde sonradan karantinaya alındıysa top kapatılamaz.", kod: "HAMMADDE_ONAYSIZ" },
++      { rol: "Operatör", ekran: "Üretim Emri (F-02) → iş emri", yol: "/tablo/uretim-emri", dugme: "İşi bitir", ne: "Artan malzemeyi tartıp yazar, depoya geri gönderir. Sistem harcanan hammaddeyi reçeteyle karşılaştırır: fark %3'ü geçerse şeften açıklama ister." },
++      { rol: "Kalite", ekran: "Üretim Lot (F-03)", yol: "/tablo/uretim-lot", dugme: "Numune al", ne: "Topun kendisinden şahit numune alır ve numune dolabına koyar. Yıllar sonra şikâyet gelirse bu numuneye bakılır.", durdurur: "Numune alınmadan top kesilemez.", kod: "NUMUNE_YOK" },
++      { rol: "Operatör", ekran: "Üretim Lot (F-03)", yol: "/tablo/uretim-lot", dugme: "Kes ve etiket bas", ne: "Topu müşterinin istediği boylarda keser (örneğin 100'er metre). Her parça aynı lotun -01, -02 diye numaralanan bir parçası olur.", durdurur: "Parçaların toplamı topu aşamaz; ölçüm sınır dışıysa top kesilmez, karantinaya gider.", kod: "KESIM_FAZLA" },
++      { rol: "Kalite", ekran: "Kalite Kontrol (F-05)", yol: "/tablo/kalite-kontrol", dugme: "Son kontrol", ne: "Parçaları müşteriye gitmeden son kez kontrol eder: serbest, karantina ya da ret.", durdurur: "Bloke edilmiş parça serbest bırakılamaz.", kod: "BLOKE" },
++      { rol: "Depo", ekran: "Sevkiyat (F-06)", yol: "/tablo/sevkiyat", dugme: "Yeni sevkiyat", ne: "Müşteriyi seçer, gönderilecek parçaları tek tek okutur ve kaliteye onaya gönderir.", durdurur: "Serbest bırakılmamış, karantinadaki ya da bloke parça okutulamaz." },
++      { rol: "Kalite", ekran: "Genel Bakış → bana atanan onaylar", yol: "/panel", ne: "Yükü onaylar.", durdurur: "Onaydan sonra yüke parça eklenirse onay sıfırlanır.", kod: "ONAY_BEKLIYOR" },
++      { rol: "Depo", ekran: "Sevkiyat (F-06)", yol: "/tablo/sevkiyat", dugme: "Sevk et", ne: "İrsaliye numarasını yazıp sevk eder. Artık Ürün Hikâyesi'nde bu parçanın hangi müşteriye gittiği görünür." },
++    ],
++  },
++  {
++    id: "hammaddeRet",
++    baslik: "2. Hammadde uygun çıkmazsa",
++    ozet: "Uygun olmayan malzeme üretime hiç giremez; tedarikçinin puanı da otomatik düşer.",
++    neZaman: "Mal kabulde kalite sorun bulduğunda",
++    demo: "hammaddeRet",
++    demoAciklama: "Reddedilen bir PET partisi",
+     adimlar: [
+-      { rol: "Depo", ne: "Mal kabul: ambalajlar tartılır, her birine etiket basılır, giriş kontrolü kaliteye atanır.", engel: "Askıdaki tedarikçiden kabul yok (TEDARIKCI_ASKIDA)", kayit: "F-01" },
+-      { rol: "Kalite", ne: "Giriş kontrolü: kabul / karantina / ret. Mal kabulü yapan kişi kendi lotunu onaylayamaz.", engel: "Dört göz kuralı", kayit: "F-01" },
+-      { rol: "Üretim şefi", ne: "İş emri açar; ürün kartında reçete + ilk parça + metraj planı olmalı. Onaya kaliteye gönderir.", engel: "Eksik ürün kartı (URUN_KARTI_EKSIK)", kayit: "F-02" },
+-      { rol: "Kalite", ne: "İş emrini onaylar. Onaydan sonra miktar/makine değişirse onay sıfırlanır.", engel: "Onaysız iş emri başlatılamaz (ONAY_BEKLIYOR)" },
+-      { rol: "Depo", ne: "Depodan hatta çekiş (gerekirse ambalaj bölünür, yeni etiket).", engel: "Kabul edilmemiş malzeme çekilemez (ONAYSIZ_MALZEME)" },
+-      { rol: "Operatör", ne: "İşi başlatır, hammaddeleri makineye okutur.", engel: "Aynı makinede başka iş çalışıyorsa başlatılamaz (MAKINE_DOLU)" },
+-      { rol: "Kalite", ne: "İlk parça ölçümü (kalibrasyonu geçerli aletle). Uygunsa üretim başlar. İlk parça yalnızca işin başında istenir.", engel: "Kalibrasyon geçmiş aletle ölçüm yok (KALIBRASYON_GECMIS)" },
+-      { rol: "Operatör", ne: "Üretim; uygunsuz kısım karantinaya ayrılır. Periyodik proses ölçümü (varsayılan 120 dk).", engel: "Ölçüm gecikirse top kapanmaz (PROSES_OLCUM_GECIKTI)" },
+-      { rol: "Operatör", ne: "Topu bitirir → üretim lotu. Makinedeki hammadde hâlâ kabul durumunda olmalı.", engel: "Karantinaya alınan hammaddeyle top kapanmaz (HAMMADDE_ONAYSIZ)", kayit: "F-03" },
+-      { rol: "Kalite", ne: "Şahit numune topun kendisinden alınır (topun metrajından düşer).", engel: "Numunesiz kesim yok (NUMUNE_YOK)" },
+-      { rol: "Operatör", ne: "Metraj ölçümü + kesim. Ölçüm tolerans dışıysa top karantinaya gider; fire = top − parçalar.", engel: "Parçalar topu aşamaz (KESIM_FAZLA)" },
+-      { rol: "Kalite", ne: "Son kontrol: serbest / karantina / ret.", engel: "Bloke parça serbest bırakılamaz (BLOKE)", kayit: "F-05" },
+-      { rol: "Depo", ne: "Sevkiyat hazırlar, parçaları okutur; kaliteye onaya gönderir.", engel: "Serbest olmayan / bloke parça okutulamaz", kayit: "F-06" },
+-      { rol: "Kalite", ne: "Yükü onaylar. Onaydan sonra yük değişirse onay sıfırlanır.", engel: "Onaysız sevk yok (ONAY_BEKLIYOR)" },
+-      { rol: "Depo", ne: "İrsaliye no ile sevk eder. Soy ağacı: müşteri → parça → top → iş emri → hammadde lotu." },
++      { rol: "Depo", ekran: "Hammadde Giriş (F-01)", yol: "/tablo/hammadde", dugme: "Yeni Kayıt", ne: "Malzemeyi normal şekilde kabul eder ve kaliteye onaya gönderir." },
++      { rol: "Kalite", ekran: "Hammadde Giriş (F-01)", yol: "/tablo/hammadde", ne: "Ölçer; sertifikayla uyuşmuyorsa ret ya da karantina der ve nedenini yazar." },
++      { rol: "Sistem", ne: "Bu partinin bütün ambalajları kilitlenir.", durdurur: "Reddedilen ya da karantinadaki malzeme depodan çekilemez, makineye okutulamaz.", kod: "ONAYSIZ_MALZEME" },
++      { rol: "Kalite", ekran: "KYS Kayıtları → Tedarikçi", yol: "/kys", ne: "Dönem sonunda tedarikçiyi değerlendirir. Kalite puanını elle girmez: sistem o dönemde gelen partilerden kaçının ilk seferde kabul edildiğine bakarak hesaplar. 60 puanın altı askıya alınır." },
+     ],
+   },
+   {
+-    baslik: "2. Arıza senaryosu",
+-    aciklama: "Makine bozulduğunda iş durur; arıza giderilince kayıt elle girilir. Makineye sistemden müdahale edilmez.",
++    id: "ariza",
++    baslik: "3. Makine arızalanırsa",
++    ozet: "Sistem makineyi yönetmez; iş emri duraklatılır, arıza giderilince kayıt elle girilir.",
++    neZaman: "Üretim sırasında makine durduğunda",
++    demo: "ariza",
++    demoAciklama: "Arıza kayıtları ve makine kartı",
+     adimlar: [
+-      { rol: "Operatör", ne: "İş emri penceresinde Duraklat (açıklama: \"tel koptu\", \"kayış koptu\"…). Yerleşim planında makine turuncu görünür." },
+-      { rol: "Operatör", ne: "Arıza sırasında ayrılan şüpheli ürünü Karantinaya ayır ile etiketler." },
++      { rol: "Operatör", ekran: "Üretim Emri (F-02) → iş emri", yol: "/tablo/uretim-emri", dugme: "Duraklat", ne: "İşi duraklatır, nedenini yazar (örneğin \"tahrik kayışı koptu\"). Makineler ekranında makine turuncu görünür." },
++      { rol: "Operatör", ekran: "Üretim Emri (F-02) → iş emri", yol: "/tablo/uretim-emri", dugme: "Karantinaya ayır", ne: "Arıza sırasında çıkan şüpheli ürünü keser, karantina etiketi yapıştırır." },
+       { rol: "Bakım", ne: "Arızayı giderir." },
+-      { rol: "Üretim şefi", ne: "KYS Kayıtları → Bakım / arıza: makine, tarih, arıza, yapılan işlem, kullanılan parça, duruş (dk) girer. Kayıt sonradan değiştirilemez." },
+-      { rol: "Operatör", ne: "Devam et: iş kaldığı yerden sürer, ilk parça yeniden istenmez." },
+-      { rol: "Yönetim", ne: "KPI: makine kullanılabilirliği arıza dakikalarıyla düşer; makine kartında son 7 gün görünür." },
++      { rol: "Üretim şefi", ekran: "KYS Kayıtları → Bakım / arıza", yol: "/kys", ne: "Makineyi, tarihi, arızayı, yapılan işi, kullanılan parçayı ve makinenin kaç dakika durduğunu girer. Kayıt sonradan değiştirilemez." },
++      { rol: "Operatör", ekran: "Üretim Emri (F-02) → iş emri", yol: "/tablo/uretim-emri", dugme: "Devam et", ne: "İş kaldığı yerden sürer; ilk parça yeniden istenmez." },
++      { rol: "Yönetim", ekran: "Performans (KPI)", yol: "/kpi", ne: "Makine kullanılabilirliği arıza dakikaları kadar düşer. Makine kartında son 7 günün bakım ve arızaları görünür." },
++    ],
++  },
++  {
++    id: "proses",
++    baslik: "4. Üretim sırasında ölçü kaçarsa",
++    ozet: "Sınır dışı bir ölçüm girildiği anda iş durur; hatalı ayarla üretime devam edilemez.",
++    neZaman: "Proses ölçümü sınır dışı çıktığında",
++    demo: "proses",
++    demoAciklama: "Ölçü kaçtığı için kendiliğinden duran iş",
++    adimlar: [
++      { rol: "Operatör", ekran: "Üretim Emri (F-02) → iş emri", yol: "/tablo/uretim-emri", dugme: "Proses ölçümü", ne: "Ölçümü girer; bir değer sınır dışı (örneğin dış çap 10,5 mm, sınır 10,3)." },
++      { rol: "Sistem", ne: "İş emri kendiliğinden duraklatılır. Son uygun ölçümden bu yana üretilenler şüpheli olarak bildirilir." },
++      { rol: "Operatör", ekran: "Üretim Emri (F-02) → iş emri", yol: "/tablo/uretim-emri", dugme: "Karantinaya ayır", ne: "Şüpheli kısmı keser ve karantinaya ayırır." },
++      { rol: "Operatör", ekran: "Üretim Emri (F-02) → iş emri", yol: "/tablo/uretim-emri", dugme: "Devam et, sonra Proses ölçümü", ne: "Ayarı düzeltir, işi sürdürür ve yeni bir ölçüm yapar.", durdurur: "Uygun bir ölçüm girilmeden top kapatılamaz.", kod: "PROSES_UYGUN_DEGIL" },
+     ],
+   },
+   {
+-    baslik: "3. Proses ölçümü tolerans dışı",
+-    aciklama: "Üretim sırasında bir ölçüm sınır dışıysa ürün sevk edilmeden yakalanır.",
++    id: "karantina",
++    baslik: "5. Karantinaya ayrılan ürün için karar",
++    ozet: "Karantinadaki ürün kalitenin kararını bekler. Karar verilmeden kullanılamaz, sevk edilemez.",
++    neZaman: "Üretimde ya da son kontrolde ürün ayrıldığında",
++    demo: "karantina",
++    demoAciklama: "Üç farklı karar ve bir bekleyen",
+     adimlar: [
+-      { rol: "Operatör", ne: "Periyodik proses ölçümünü girer; bir değer bile sınır dışı." },
+-      { rol: "Sistem", ne: "İş emri otomatik DURAKLATILDI; şüpheli aralık (son uygun ölçümden şimdiye) bildirilir." },
+-      { rol: "Operatör", ne: "Şüpheli kısmı karantinaya ayırır. Gerekirse kalite Geri Çağırma ekranından makine + saat aralığıyla etkilenen parçaları bloke eder." },
+-      { rol: "Operatör", ne: "Ayarı düzeltir, Devam et der, yeni proses ölçümü yapar.", engel: "Uygun proses ölçümü olmadan top kapanmaz (PROSES_UYGUN_DEGIL)" },
++      { rol: "Operatör", ekran: "Üretim Emri (F-02) → iş emri", yol: "/tablo/uretim-emri", dugme: "Karantinaya ayır", ne: "Sorunlu kısmı keser, hata kodunu ve metresini yazar, karantina etiketini yapıştırır." },
++      { rol: "Depo", ekran: "Depo İşlemleri → Rafa yerleştir", yol: "/depo", ne: "Karantina etiketli ürünü karantina alanına koyar.", durdurur: "Karar bekleyen ürün normal rafa konamaz." },
++      { rol: "Kalite", ekran: "Karantina / Red (F-04)", yol: "/tablo/karantina-red", dugme: "Karar ver", ne: "Dört karardan birini verir: olumlu (tekrar ölçüldü, sorun yok; ürün yeni numara alır), yeniden işleme, şartlı kabul (müşteri onayıyla; not zorunlu) ya da hurda (not zorunlu)." },
++      { rol: "Kalite", ekran: "Karantina / Red (F-04) → alttaki tablo", yol: "/tablo/karantina-red", dugme: "Serbest / Reddet", ne: "Son kontrolde ya da müşteri iadesinde karantinaya alınan bitmiş parçalar alttaki tabloda durur; bunlar için karar serbest ya da ret." },
+     ],
+   },
+   {
+-    baslik: "4. Müşteri şikâyeti, iade ve DÖF",
+-    aciklama: "Şikâyet ancak düzeltici faaliyet etkinliği doğrulandıktan sonra kapanır.",
++    id: "iade",
++    baslik: "6. Müşteri şikâyeti, iade ve düzeltici faaliyet (DÖF)",
++    ozet: "Şikâyet, sorunun kök nedeni bulunup giderildiği ve bunun işe yaradığı doğrulandıktan sonra kapanır.",
++    neZaman: "Müşteri bir sorun bildirdiğinde",
++    demo: "iade",
++    demoAciklama: "Müşteriye gidip iade edilen makara",
+     adimlar: [
+-      { rol: "Kalite", ne: "Şikâyet açar (müşteri, sevkiyat, lot). Sevkiyat/lot o müşteriye gitmiş olmalı.", engel: "BASKA_MUSTERI" },
+-      { rol: "Depo", ne: "Geri gelen parçaları okutur → parça karantinaya, olay: müşteri iadesi.", engel: "Sevk edilmemiş parça iade olamaz" },
+-      { rol: "Kalite", ne: "İade parçaya son kontrolde karar: serbest ya da ret (hurda). Lotun numunesi şikâyet açıkken imha edilemez.", engel: "NUMUNE_DELIL" },
+-      { rol: "Kalite", ne: "DÖF açar, sorumlu ve termin verir." },
+-      { rol: "Üretim şefi", ne: "Sorumlu: kök neden + faaliyet yazar, uygular, tamamlandı bildirir.", engel: "Kök nedensiz tamamlanamaz (KOK_NEDEN_YOK)" },
+-      { rol: "Kalite", ne: "Etkinliği doğrular (sorumlu kendi DÖF'ünü kapatamaz). Etkisizse uygulamaya geri döner.", engel: "Dört göz kuralı" },
+-      { rol: "Kalite", ne: "Şikâyeti kapatır.", engel: "DÖF açıkken (DOF_ACIK) ya da iade kararı verilmeden (IADE_KARARI_YOK) kapanmaz" },
++      { rol: "Kalite", ekran: "KYS Kayıtları → Şikâyet", yol: "/kys", ne: "Şikâyeti açar: müşteri, sevkiyat ve lot seçilir. Ürün Hikâyesi'nden parçanın hammaddesine, makinesine, operatörüne kadar bakılır.", durdurur: "Seçilen sevkiyat o müşteriye gitmemişse şikâyet açılamaz.", kod: "BASKA_MUSTERI" },
++      { rol: "Depo", ekran: "KYS Kayıtları → Şikâyet → iade", yol: "/kys", ne: "Geri gelen parçaları okutur; parçalar kendiliğinden karantinaya düşer.", durdurur: "Sevk edilmemiş parça iade alınamaz." },
++      { rol: "Kalite", ekran: "Karantina / Red (F-04) → alttaki tablo", yol: "/tablo/karantina-red", ne: "İade parçaya karar verir: serbest ya da ret (hurda).", durdurur: "Şikâyet açıkken o lotun şahit numunesi imha edilemez; delil olarak saklanır.", kod: "NUMUNE_DELIL" },
++      { rol: "Kalite", ekran: "KYS Kayıtları → Şikâyet", yol: "/kys", dugme: "DÖF aç", ne: "Sorumlu kişiyi ve bitiş tarihini seçer." },
++      { rol: "Üretim şefi", ekran: "KYS Kayıtları → DÖF", yol: "/kys", ne: "Kök nedeni ve yapılacak faaliyeti yazar, uygular ve \"tamamladım\" der.", durdurur: "Kök neden yazılmadan tamamlanamaz.", kod: "KOK_NEDEN_YOK" },
++      { rol: "Kalite", ekran: "KYS Kayıtları → DÖF", yol: "/kys", ne: "Faaliyetin işe yarayıp yaramadığını doğrular. İşe yaramadıysa DÖF uygulamaya geri döner.", durdurur: "DÖF'ün sorumlusu kendi DÖF'ünü doğrulayamaz (dört göz kuralı)." },
++      { rol: "Kalite", ekran: "KYS Kayıtları → Şikâyet", yol: "/kys", dugme: "Kapat", ne: "Şikâyeti kapatır. Haklı değilse gerekçe yazılarak kapatılır.", durdurur: "DÖF kapanmadan ya da iade parçalara karar verilmeden haklı şikâyet kapanmaz.", kod: "DOF_ACIK" },
+     ],
+   },
+   {
+-    baslik: "5. Kalibrasyon uygun değil",
+-    aciklama: "Hatalı ölçüm aletiyle verilmiş kararlar geriye dönük bulunur.",
++    id: "geriCagirma",
++    baslik: "7. Bir parti sonradan sorunlu çıkarsa (geri çağırma)",
++    ozet: "Bütün haftanın üretimini değil, sadece o partiden yapılan parçaları bulur ve durdurur.",
++    neZaman: "Tedarikçi uyarısı ya da tekrarlayan şikâyet geldiğinde",
++    demo: "geriCagirma",
++    demoAciklama: "Şüpheli çıkan bir Teknofil partisi",
+     adimlar: [
+-      { rol: "Kalite", ne: "Kalibrasyon sonucu: uygun değil (açıklama zorunlu)." },
+-      { rol: "Sistem", ne: "Alet kullanım dışı olur; son uygun kalibrasyondan beri bu aletle yapılan ölçümler ve iş emirleri listelenir." },
+-      { rol: "Kalite", ne: "Etkilenen üretimi Geri Çağırma ekranından bloke eder, gerekirse DÖF açar." },
+-      { rol: "Sistem", ne: "Bu aletle yeni ölçüm kabul edilmez.", engel: "ALET_KULLANIM_DISI" },
++      { rol: "Kalite", ekran: "Geri Çağırma", yol: "/geri-cagirma", dugme: "Etkilenenleri bul", ne: "Hammadde partisini ya da makine + saat aralığını girer. Sistem o partiden yapılan bütün parçaları listeler: hangileri depoda, hangileri hangi müşteriye gitmiş." },
++      { rol: "Kalite", ekran: "Geri Çağırma", yol: "/geri-cagirma", dugme: "Bloke et", ne: "Depodaki parçaları bloke eder, nedenini yazar. Müşteriye gitmiş olanlar için müşteriler aranır." },
++      { rol: "Sistem", ne: "Bloke parçalar Ürün Hikâyesi'nde ve depoda turuncu \"BLOKE\" etiketiyle görünür.", durdurur: "Bloke parça sevkiyata okutulamaz, serbest bırakılamaz.", kod: "BLOKE" },
++      { rol: "Kalite", ekran: "Hammadde Giriş (F-01)", yol: "/tablo/hammadde", ne: "Partinin depoda kalan ambalajlarını karantinaya alır; artık üretime çekilemezler." },
++      { rol: "Kalite", ekran: "Geri Çağırma", yol: "/geri-cagirma", ne: "İnceleme bitince blokeyi gerekçesini yazarak kaldırır ya da parçaları hurdaya ayırır." },
++    ],
++  },
++  {
++    id: "kalibrasyon",
++    baslik: "8. Ölçüm aletinin kalibrasyonu bozuk çıkarsa",
++    ozet: "Bozuk aletle verilmiş kararlar geriye dönük bulunur; o aletle yeni ölçüm girilemez.",
++    neZaman: "Kalibrasyon sonucu uygun değil geldiğinde",
++    demo: "kalibrasyon",
++    demoAciklama: "Kullanım dışı kalan şerit metre",
++    adimlar: [
++      { rol: "Kalite", ekran: "KYS Kayıtları → Kalibrasyon", yol: "/kys", ne: "Kalibrasyon sonucunu \"uygun değil\" diye girer, açıklamasını yazar." },
++      { rol: "Sistem", ne: "Alet kullanım dışı olur. Son uygun kalibrasyondan bu yana bu aletle yapılmış ölçümler ve ilgili iş emirleri listelenir." },
++      { rol: "Kalite", ekran: "Geri Çağırma", yol: "/geri-cagirma", ne: "Gerekirse etkilenen üretimi bloke eder ve DÖF açar." },
++      { rol: "Sistem", ne: "Bu aletle yeni ölçüm girilmeye çalışılırsa reddedilir.", kod: "ALET_KULLANIM_DISI" },
+     ],
+   },
+ ];
+ 
+ function Surec() {
++  const o = useOturum();
++  const t = useTanimlar();
++  const ornekler: Record<string, string> = ((t.data as any)?.firma?.ayarlar?.demo?.ornekler as Record<string, string>) || {};
++  const benimRol = o?.kullanici.roller.map((r) => OTURUM_ROL[r]).find(Boolean) || "Herkes";
++  const [filtre, setFiltre] = useState<string>("Herkes");
++  const [acik, setAcik] = useState<string>("anaAkis");
++  const secili = ROL_FILTRE.find((x) => x.ad === filtre) || ROL_FILTRE[0];
++
+   return (
+     <div>
+-      <PageHeader eyebrow="KYS" title="Süreç Akışları" description="Kim, hangi adımı yapar; bir onay eksikse sistem neyi durdurur. Parantez içindekiler sistemin verdiği hata kodlarıdır." />
+-      <div className="grid gap-6 p-8 xl:grid-cols-2">
+-        {AKISLAR.map((a) => (
+-          <Bolum key={a.baslik} baslik={a.baslik} className={a.adimlar.length > 10 ? "xl:row-span-2" : undefined}>
+-            <p className="mb-4 text-sm text-tas-500">{a.aciklama}</p>
+-            <ol className="space-y-1">
+-              {a.adimlar.map((x, i) => (
+-                <li key={i}>
+-                  <div className="flex gap-3">
+-                    <span className={cn("h-fit w-24 shrink-0 rounded-md px-2 py-1 text-center text-[11px] font-bold", ROL_RENK[x.rol])}>{x.rol}</span>
+-                    <div className="min-w-0 flex-1 text-sm">
+-                      <div className="text-murekkep">
+-                        {x.ne} {x.kayit && <span className="ml-1 font-mono text-[11px] font-semibold text-unity">{x.kayit}</span>}
++      <PageHeader
++        eyebrow="KYS"
++        title="Süreç Akışları"
++        description="Her senaryoda kim, hangi ekranda, hangi düğmeye basar ve sistem neyi neden durdurur. Yeni başlayan biri kendi rolünü seçip yalnızca kendi adımlarını öne çıkarabilir."
++      />
++      <div className="space-y-5 p-8">
++        <div className="flex flex-wrap items-center gap-2">
++          <span className="mr-1 text-sm text-tas-500">Adımları öne çıkar:</span>
++          {ROL_FILTRE.map((x) => (
++            <button
++              key={x.ad}
++              onClick={() => setFiltre(x.ad)}
++              className={cn(
++                "rounded-full px-3 py-1 text-sm font-semibold ring-1 transition",
++                filtre === x.ad ? "bg-murekkep text-white ring-murekkep" : "bg-white text-tas-600 ring-tas-200 hover:ring-tas-400",
++              )}
++            >
++              {x.ad}
++              {x.ad === benimRol && x.ad !== "Herkes" && <span className="ml-1 text-[10px] font-normal opacity-70">(sizin rolünüz)</span>}
++            </button>
++          ))}
++        </div>
++
++        <div className="grid gap-5 lg:grid-cols-[280px_1fr]">
++          <nav className="space-y-1.5 lg:sticky lg:top-4 lg:self-start">
++            {AKISLAR.map((a) => (
++              <button
++                key={a.id}
++                onClick={() => setAcik(a.id)}
++                className={cn(
++                  "w-full rounded-xl px-4 py-3 text-left ring-1 transition",
++                  acik === a.id ? "bg-white ring-unity" : "bg-white/60 ring-tas-200 hover:ring-tas-400",
++                )}
++              >
++                <div className="text-sm font-semibold text-murekkep">{a.baslik}</div>
++                <div className="mt-0.5 text-[11px] text-tas-500">{a.neZaman}</div>
++              </button>
++            ))}
++          </nav>
++
++          {AKISLAR.filter((a) => a.id === acik).map((a) => (
++            <section key={a.id} className="rounded-2xl border border-tas-200 bg-white p-6">
++              <h2 className="font-display text-2xl font-bold text-murekkep">{a.baslik}</h2>
++              <p className="mt-1 text-[15px] text-tas-600">{a.ozet}</p>
++              {a.demo && ornekler[a.demo] && (
++                <Link
++                  to={(ornekler[a.demo].startsWith("/") ? ornekler[a.demo] : `/izle/${ornekler[a.demo]}`) as any}
++                  className="mt-3 inline-flex items-center gap-2 rounded-lg bg-unity-acik px-3 py-2 text-sm font-semibold text-unity-koyu hover:bg-unity/15"
++                >
++                  <PlayCircle className="h-4 w-4" /> Demoda görmek için: {a.demoAciklama}
++                  {!ornekler[a.demo].startsWith("/") && <span className="font-mono text-xs">({ornekler[a.demo]})</span>}
++                </Link>
++              )}
++
++              <ol className="mt-6">
++                {a.adimlar.map((x, i) => {
++                  const soluk = secili.roller.length > 0 && !secili.roller.includes(x.rol);
++                  return (
++                    <li key={i} className={cn("transition-opacity", soluk && "opacity-35")}>
++                      <div className="flex gap-4">
++                        <div className="flex w-28 shrink-0 flex-col items-center">
++                          <span className="mb-1 flex h-6 w-6 items-center justify-center rounded-full bg-murekkep text-xs font-bold text-white">{i + 1}</span>
++                          <span className={cn("w-full rounded-md px-2 py-1 text-center text-[11px] font-bold", ROL_RENK[x.rol])}>{x.rol}</span>
++                        </div>
++                        <div className="min-w-0 flex-1 rounded-xl bg-tas-50 px-4 py-3 ring-1 ring-tas-100">
++                          {(x.ekran || x.dugme) && (
++                            <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px]">
++                              {x.ekran &&
++                                (x.yol ? (
++                                  <Link to={x.yol as any} className="inline-flex items-center gap-1 font-semibold text-unity hover:underline">
++                                    {x.ekran} <ExternalLink className="h-3 w-3" />
++                                  </Link>
++                                ) : (
++                                  <span className="font-semibold text-tas-600">{x.ekran}</span>
++                                ))}
++                              {x.dugme && (
++                                <span className="rounded-md bg-white px-1.5 py-0.5 font-semibold text-murekkep ring-1 ring-tas-200">düğme: {x.dugme}</span>
++                              )}
++                            </div>
++                          )}
++                          <div className="text-[14px] leading-relaxed text-murekkep">{x.ne}</div>
++                          {x.durdurur && (
++                            <div className="mt-1.5 flex items-start gap-1.5 text-[13px] text-unity-koyu">
++                              <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
++                              <span>
++                                Sistem durdurur: {x.durdurur}
++                                {x.kod && <span className="ml-1.5 font-mono text-[10px] text-tas-400">{x.kod}</span>}
++                              </span>
++                            </div>
++                          )}
++                          {!x.durdurur && x.kod && <div className="mt-1 font-mono text-[10px] text-tas-400">{x.kod}</div>}
++                        </div>
+                       </div>
+-                      {x.engel && (
+-                        <div className="mt-0.5 flex items-start gap-1 text-[12px] text-unity-koyu">
+-                          <Lock className="mt-0.5 h-3 w-3 shrink-0" /> {x.engel}
++                      {i < a.adimlar.length - 1 && (
++                        <div className="flex w-28 justify-center py-1">
++                          <ArrowDown className="h-4 w-4 text-tas-300" />
+                         </div>
+                       )}
+-                    </div>
+-                  </div>
+-                  {i < a.adimlar.length - 1 && <ArrowDown className="my-0.5 ml-10 h-3.5 w-3.5 text-tas-300" />}
+-                </li>
+-              ))}
+-            </ol>
+-          </Bolum>
+-        ))}
++                    </li>
++                  );
++                })}
++              </ol>
++            </section>
++          ))}
++        </div>
+       </div>
+     </div>
+   );
+diff --git a/frontend/src/routes/index.tsx b/frontend/src/routes/index.tsx
+index f4adab1c..00cb97f2 100644
+--- a/frontend/src/routes/index.tsx
++++ b/frontend/src/routes/index.tsx
+@@ -414,6 +414,7 @@ function GelistirmeHesaplari() {
+     { ad: "mehmet", sifre: "Mehmet.1234", rol: "Üretim şefi" },
+     { ad: "ayse", sifre: "Ayse.1234", rol: "Depo" },
+     { ad: "ahmet", sifre: "Ahmet.1234", rol: "Operatör" },
++    { ad: "said", sifre: "Said.1234", rol: "Kalite" },
+     { ad: "denetci", sifre: "Denetci.1234", rol: "Denetçi" },
+   ];
+   return (
+diff --git a/sunucu/SUNUCU_KURULUM.md b/sunucu/SUNUCU_KURULUM.md
+index 6ff773a1..7cd7e970 100644
+--- a/sunucu/SUNUCU_KURULUM.md
++++ b/sunucu/SUNUCU_KURULUM.md
+@@ -164,6 +164,20 @@ Sunucuda örnek hesapların şifreleri **rastgele üretilir** ve **yalnızca bu
+ 
+ Yedekler sunucu diskinde durur. Ayda bir Mac'e indir: sunucu tamamen giderse yedek de gider.
+ 
++## Demo verisini yenileme
++
++Demo kayıtları son 7 iş gününe yayılır; "bugün" adımları komutun çalıştığı saate göre yazılır. Sunumdan hemen önce yenilemek en iyisidir.
++
++```
++bash /opt/iso-kys/sunucu/demo-sifirla.sh          # önce bak: ne silinecek, ne korunacak (hiçbir şey değişmez)
++bash /opt/iso-kys/sunucu/demo-sifirla.sh --evet   # yedek alır, siler, yeniden yükler
++```
++
++- Kullanıcılar (şifre, PIN, rol), firma kodu, unvanı ve ayarları korunur.
++- Tanımlar ekranından örnek olmayan bir makine, ürün, müşteri vb. girilmişse hiçbir şey yapmadan durur.
++- Her seferinde önce `yedekler/demo_oncesi_*.dump` yedeği alınır.
++- Gerçek kullanıma geçildiğinde bu komut bir daha çalıştırılmaz.
++
+ ## Başka sunucuya taşıma
+ 
+ 1. Eski sunucuda yedek al ve indir (yukarıdaki tablo).
+diff --git a/sunucu/demo-sifirla.sh b/sunucu/demo-sifirla.sh
+new file mode 100755
+index 00000000..fbc41366
+--- /dev/null
++++ b/sunucu/demo-sifirla.sh
+@@ -0,0 +1,69 @@
++#!/usr/bin/env bash
++# Demo verisini silip yeniden yukler. YALNIZCA bu projenin (iso-kys) veritabanina dokunur;
++# sunucudaki diger projelere, konteynerlere ve klasorlere dokunmaz.
++#
++#   bash /opt/iso-kys/sunucu/demo-sifirla.sh          -> KURU CALISMA: neyin silinip neyin korunacagini gosterir, hicbir sey degistirmez
++#   bash /opt/iso-kys/sunucu/demo-sifirla.sh --evet   -> once yedek alir, sonra siler ve demo verisini yeniden yukler
++#
++# Korunanlar: kullanicilar (sifre, PIN, rol), firma kodu, unvani ve ayarlari.
++# Yeni eklenen kisi (Said) icin sifre uretilir, ekrana yazilir ve ilk-sifreler.txt dosyasinin sonuna eklenir.
++# Bir sey ters giderse alinan yedekten geri donulur (komut en sonda yazar).
++set -euo pipefail
++
++KLASOR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++cd "$KLASOR"
++
++adim() { printf '\n\033[1;34m==> %s\033[0m\n' "$1"; }
++tamam() { printf '\033[0;32m    %s\033[0m\n' "$1"; }
++dur() { printf '\n\033[1;31mHATA: %s\033[0m\n' "$1"; exit 1; }
++
++[ "$(id -u)" = 0 ] || dur "root olarak calistirin."
++[ -f docker-compose.yml ] && grep -q '^name: iso-kys' docker-compose.yml || dur "Bu betik /opt/iso-kys/sunucu klasorundeki docker-compose.yml ile calisir."
++api="$(docker compose ps -q api 2>/dev/null || true)"
++[ -n "$api" ] || dur "iso-kys api konteyneri calismiyor. Once:  cd $KLASOR && docker compose up -d"
++[ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$api")" = "healthy" ] || dur "API henuz hazir degil (healthy degil). Biraz bekleyip tekrar deneyin."
++docker compose exec -T api test -f scripts/demo-sifirla.js || dur "API imajinda scripts/demo-sifirla.js yok. Once yeni kodla derleyin:  cd $KLASOR && docker compose up -d --build"
++
++if [ "${1:-}" != "--evet" ]; then
++  adim "KURU CALISMA (hicbir sey degismez)"
++  docker compose exec -T api node scripts/demo-sifirla.js
++  printf '\nUygulamak icin:  bash %s/demo-sifirla.sh --evet\n\n' "$KLASOR"
++  exit 0
++fi
++
++ZAMAN="$(date +%Y%m%d_%H%M%S)"
++YEDEK="demo_oncesi_${ZAMAN}.dump"
++
++adim "1/3 Once kontrol (kuru calisma): bir engel varsa hicbir sey yapilmadan durur"
++docker compose exec -T api node scripts/demo-sifirla.js > "/tmp/iso-kys-demo-kontrol.txt" 2>&1 || { cat /tmp/iso-kys-demo-kontrol.txt; dur "Kontrol gecmedi. Hicbir sey degismedi."; }
++grep -q "KURU CALISMA" /tmp/iso-kys-demo-kontrol.txt || { cat /tmp/iso-kys-demo-kontrol.txt; dur "Kontrol tamamlanmadi. Hicbir sey degismedi."; }
++rm -f /tmp/iso-kys-demo-kontrol.txt
++tamam "Kontrol tamam."
++
++adim "2/3 Veritabani yedegi aliniyor: $KLASOR/yedekler/$YEDEK"
++docker compose exec -T yedek sh -c "pg_dump --format=custom --no-owner --file=/yedekler/$YEDEK && pg_restore --list /yedekler/$YEDEK >/dev/null" \
++  || dur "Yedek alinamadi. Hicbir sey silinmedi."
++[ -s "yedekler/$YEDEK" ] || dur "Yedek dosyasi bos. Hicbir sey silinmedi."
++tamam "Yedek alindi ve okunabildigi denetlendi ($(du -h "yedekler/$YEDEK" | cut -f1))."
++
++adim "3/3 Demo verisi siliniyor ve yeniden yukleniyor (1-2 dakika)"
++LOG="demo-sifirla_${ZAMAN}.log"
++set +e
++docker compose exec -T api node scripts/demo-sifirla.js --evet 2>&1 | tee "$LOG"
++SONUC=${PIPESTATUS[0]}
++set -e
++chmod 600 "$LOG"
++if [ "$SONUC" != 0 ]; then
++  printf '\n\033[1;31mHATA: demo yuklenemedi. Ekrandaki ciktiyi gonderin.\033[0m\n'
++  printf 'Eski haline donmek icin (yalnizca gerekirse):\n'
++  printf '  cd %s && docker compose exec -T yedek pg_restore --clean --if-exists --no-owner -d iso_db /yedekler/%s\n\n' "$KLASOR" "$YEDEK"
++  exit 1
++fi
++
++if grep -q '^YENI_KISI' "$LOG"; then
++  { echo ""; echo "# $(date '+%F %T') demo-sifirla ile eklenen kisi(ler):"; grep '^YENI_KISI' "$LOG"; } >> ilk-sifreler.txt
++  chmod 600 ilk-sifreler.txt
++  tamam "Yeni kisinin sifresi ayrica su dosyanin sonuna eklendi: $KLASOR/ilk-sifreler.txt"
++fi
++printf '\n\033[1;32mDemo verisi yenilendi.\033[0m  Yedek: %s/yedekler/%s\n' "$KLASOR" "$YEDEK"
++printf 'Herkes tarayicida bir kez cikis yapip yeniden girmeli (eski oturumlar gecersiz).\n\n'

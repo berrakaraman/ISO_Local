@@ -156,6 +156,39 @@ async function agac(c, F, ham, yon = "ikisi") {
     }
   }
 
+  // Hammadde kutulari: bu agactaki is emirlerine bu ambalajdan ne kadar gitti (ilk miktar degil, kullanilan).
+  // Sadece "bundan bolundu" diye agaca giren ambalaj (kendisi makineye takilmamis) ayrica isaretlenir.
+  const rmIdler = birimler.rows.filter((b) => b.tip === "RM").map((b) => b.id);
+  if (rmIdler.length) {
+    const g = await c.query(
+      `SELECT g.birim_id, ie.no, g.baglama_miktari, g.tuketilen, g.cikarma_zamani
+         FROM is_emri_baglama g JOIN is_emri ie ON ie.id = g.is_emri_id
+        WHERE g.birim_id = ANY($1::uuid[]) AND g.is_emri_id = ANY($2::uuid[])`,
+      [rmIdler, ieIdler],
+    );
+    for (const d of dugumler) {
+      if (d.tur !== "RM") continue;
+      const k = g.rows.filter((x) => x.birim_id === d.id);
+      d.kullanim = k.map((x) => ({
+        isEmriNo: x.no,
+        miktar: x.cikarma_zamani ? Number(x.tuketilen) : Number(x.baglama_miktari),
+        aktif: !x.cikarma_zamani,
+      }));
+      d.buIseGiden = k.length ? yuvarla(d.kullanim.reduce((t, x) => t + x.miktar, 0)) : null;
+      d.sadeceKaynak = !k.length && birimler.rows.some((y) => y.kaynak_birim_id === d.id);
+    }
+  }
+
+  // Parca kutulari: basina gelenlerin tek satirlik ozeti ve su anki hali
+  const { yolculuklar } = require("./hikaye");
+  const yol = await yolculuklar(c, F, birimler.rows.filter((b) => ["FG", "KR", "RM", "FG_LOT"].includes(b.tip)));
+  for (const d of dugumler) {
+    if (yol[d.id]) {
+      d.yolculuk = yol[d.id].ozet;
+      d.simdi = yol[d.id].simdi;
+    }
+  }
+
   // Sevkiyat dugumleri ("Kime gitti?")
   const sv = await c.query(
     `SELECT ss.birim_id, s.id, s.no, s.durum, s.onay_zamani, s.irsaliye_no, mu.unvan AS musteri

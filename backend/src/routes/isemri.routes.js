@@ -10,7 +10,7 @@ const { yeniNumara } = require("../services/numara");
 const { olayYaz, izYaz, farklar } = require("../services/iz");
 const { etiketBas } = require("../services/etiket");
 const { birimBul, birimOlustur, bagla, birimGuncelle, blokeKontrol, firmaAyarlari } = require("../services/birim");
-const { onayOlustur, onayKontrol, onaySifirla } = require("../services/onay");
+const { onayOlustur, onayKontrol, onaySifirla, onayEsitle } = require("../services/onay");
 const { yuvarla, sifirMi } = require("../lib/miktar");
 const { aletKontrol } = require("../services/alet");
 
@@ -739,6 +739,8 @@ router.post(
       if (gerekce.length < 5) throw hatalar.gecersiz("Iptal gerekcesi en az 5 karakter olmali");
       await durumDegistir(c, req.ctx, ie, S.IPTAL, gerekce);
       await c.query("UPDATE is_emri SET iptal_eden = $1, iptal_zamani = now(), iptal_gerekcesi = $2 WHERE id = $3", [req.ctx.kullaniciId, gerekce, ie.id]);
+      // Bekleyen onay kapanir (iptal edilen is emri kimsenin onay kutusunda kalmasin)
+      await onayEsitle(c, req.ctx, "IS_EMRI", ie.no, "REDDEDILDI", `Kayit iptal edildi: ${gerekce}`);
       return { no: ie.no, durum: S.IPTAL };
     });
     res.json(sonuc);

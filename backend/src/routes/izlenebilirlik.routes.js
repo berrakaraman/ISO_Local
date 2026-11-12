@@ -9,6 +9,7 @@ const { olayYaz, birimDurumu } = require("../services/iz");
 const { etiketBas, etiketVerisi, zplUret } = require("../services/etiket");
 const { birimBul, birimGuncelle } = require("../services/birim");
 const { cozumle, agac, zamanCizelgesi } = require("../services/izlenebilirlik");
+const { ozet } = require("../services/hikaye");
 
 const router = express.Router();
 const yonOku = (q) => d.secim(q || "ikisi", "Yon", ["geri", "ileri", "ikisi"]);
@@ -40,6 +41,14 @@ router.get(
 );
 
 // GET /api/birimler/:barkod/etiket  -> etiket onizlemesi (kayit olusturmaz)
+// GET /api/izlenebilirlik/:barkod/ozet  -> duz cumlelerle hikaye + uretim lotu / hammadde lotu dokumu (services/hikaye.js)
+router.get(
+  "/izlenebilirlik/:barkod/ozet",
+  sar(async (req, res) => {
+    res.json(await ozet(pool, req.ctx.firmaId, req.params.barkod));
+  }),
+);
+
 router.get(
   "/birimler/:barkod/etiket",
   sar(async (req, res) => {

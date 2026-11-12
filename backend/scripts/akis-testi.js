@@ -89,7 +89,7 @@ async function main() {
   const sefKisi = kisilerKalite.find((x) => x.roller.includes("SEF"));
   const kaliteKisi = (await ok("Onaya atanabilecek kalite kisileri", depo, "GET", "/onaylar/kisiler?rol=KALITE")).find((x) => x.roller.includes("KALITE"));
   esit("Kisi kendini onay listesinde gormez", (await istek(depo, "GET", "/onaylar/kisiler")).veri.some((x) => x.id === depoKisi.id), false);
-  esit("Is emri onaylayicilari yalnizca kalite/yonetim", (await istek(sef, "GET", "/onaylar/kisiler?tur=IS_EMRI")).veri.map((x) => x.adSoyad), [kaliteKisi.adSoyad]);
+  esit("Is emri onaylayicilari yalnizca kalite/yonetim", (await istek(sef, "GET", "/onaylar/kisiler?tur=IS_EMRI")).veri.map((x) => x.adSoyad), [kaliteKisi.adSoyad, "Said Kalite"]);
   const onayla = (ad, onayId) => ok(ad, kalite, "POST", `/onaylar/${onayId}/karar`, { durum: "ONAYLANDI" });
 
   console.log("\n3) Mal kabul ve giris kontrolu");
@@ -275,6 +275,8 @@ async function main() {
   await ok("Lot iptal (silinmez)", depo, "POST", `/hammadde/lotlar/${k2.lot.no}/iptal`, { gerekce: "Irsaliye yanlis firmaya aitmis" });
   const iptalSatir = (await istek(depo, "GET", "/hammadde/lotlar")).veri.find((x) => x.no === k2.lot.no);
   esit("Iptal kaydi listede duruyor", [iptalSatir.durum, iptalSatir.iptalEdenAd, iptalSatir.kalanMiktar], ["IPTAL", depoKisi.adSoyad, 0]);
+  const bekleyenRm = (await istek(kalite, "GET", "/onaylar?durum=BEKLIYOR")).veri;
+  esit("Iptal edilen hammadde onay kutusunda kalmaz", bekleyenRm.some((x) => x.kayitNo === k2.lot.no), false);
   esit("Iptal edilen ambalaj barkodu hala bulunur", (await istek(depo, "GET", `/barkod/${k2.lot.no}-01`)).durum, 200);
   await engel("Iptal edilmis lota karar", "IPTAL_EDILMIS", kalite, "POST", `/hammadde/lotlar/${k2.lot.no}/kontrol`, { karar: "KABUL" });
   const bk2 = await ok("Iptal edilen lotun bakiyesi", kalite, "GET", `/hammadde/lotlar/${k2.lot.no}/bakiye`);
@@ -306,6 +308,8 @@ async function main() {
   await engel("Kisa gerekceyle is emri iptali", "GECERSIZ_ISTEK", sef, "POST", `/is-emirleri/${ie2.isEmri.no}/iptal`, { gerekce: "x" });
   await ok("Is emri iptal (silinmez)", sef, "POST", `/is-emirleri/${ie2.isEmri.no}/iptal`, { gerekce: "Musteri siparisi erteledi" });
   await engel("Iptal edilmis is emri onaylanir", "YANLIS_DURUM", kalite, "POST", `/onaylar/${ie2.onay.id}/karar`, { durum: "ONAYLANDI" });
+  const bekleyenler = (await istek(kalite, "GET", "/onaylar?benim=1&durum=BEKLIYOR")).veri;
+  esit("Iptal edilen is emri onay kutusunda kalmaz", bekleyenler.some((x) => x.kayitNo === ie2.isEmri.no), false);
   const ieListe = await ok("F-02 listesi", sef, "GET", "/is-emirleri");
   const ie2Satir = ieListe.find((x) => x.no === ie2.isEmri.no);
   esit("F-02 iptal eden ve kaydeden", [ie2Satir.durum, ie2Satir.iptalEdenAd, ie2Satir.olusturanAd], ["IPTAL", sefKisi.adSoyad, sefKisi.adSoyad]);
@@ -323,6 +327,8 @@ async function main() {
   const sv2Satir = svListe.find((x) => x.no === sv2);
   esit("F-06 hazirlayan / sevk eden / onaylayan / lot", [sv3Satir.olusturanAd, sv3Satir.onaylayanAd, sv3Satir.onayKararVerenAd, sv3Satir.lotlar], [depoKisi.adSoyad, depoKisi.adSoyad, kaliteKisi.adSoyad, fgLot]);
   esit("Iptal edilen sevkiyat duruyor", [sv2Satir.durum, sv2Satir.iptalEdenAd], ["IPTAL", depoKisi.adSoyad]);
+  const bekleyenSv = (await istek(kalite, "GET", "/onaylar?durum=BEKLIYOR")).veri;
+  esit("Iptal edilen sevkiyat onay kutusunda kalmaz", bekleyenSv.some((x) => x.kayitNo === sv2), false);
   esit("Iptalle parca 04 serbest", (await istek(depo, "GET", `/barkod/${kesim.birimler[3].barkod}`)).veri.birim.durum, "SERBEST");
   for (const [tur, no] of [["URETIM_LOT", fgLot], ["KARANTINA", kr1.karantina.barkod], ["SEVKIYAT", sv3.no]]) {
     const g = await ok(`${tur} gecmisi`, kalite, "GET", `/gecmis/${tur}/${no}`);

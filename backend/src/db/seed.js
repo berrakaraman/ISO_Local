@@ -32,6 +32,8 @@ const KULLANICILAR = [
   { kullaniciAdi: "mehmet", adSoyad: "Mehmet Demir", sifre: "Mehmet.1234", sicil: "1002", pin: "2222", roller: ["SEF"] },
   { kullaniciAdi: "ayse", adSoyad: "Ayşe Kaya", sifre: "Ayse.1234", sicil: "1003", pin: "3333", roller: ["DEPO"] },
   { kullaniciAdi: "ahmet", adSoyad: "Ahmet Yılmaz", sifre: "Ahmet.1234", sicil: "1215", pin: "1234", roller: ["OPERATOR"] },
+  // Ikinci kalite yetkilisi: dort goz kurali geregi Berra'nin girdigi kaydi onaylayacak biri olmali
+  { kullaniciAdi: "said", adSoyad: "Said Kalite", sifre: "Said.1234", sicil: "1004", pin: "4444", roller: ["KALITE"] },
   { kullaniciAdi: "denetci", adSoyad: "Dış Denetçi", sifre: "Denetci.1234", roller: ["DENETCI"] },
 ];
 
@@ -95,26 +97,26 @@ async function main() {
       const kod = `OR${String(i).padStart(2, "0")}`;
       const sira = i <= 8 ? 0 : 1;
       const x = 6 + ((i - 1) % 8) * 9;
-      makineler.push([kod, `Orgu makinesi ${i}`, "ORGU", x, sira ? 62 : 22]);
+      makineler.push([kod, `Örgü makinesi ${i}`, "ORGU", x, sira ? 62 : 22]);
     }
-    makineler.push(["MS01", "Masura sarim", "MASURA", 84, 22], ["EX01", "Ekstruder 1", "EKSTRUZYON", 84, 62], ["MT01", "Metraj ve kesim", "METRAJ", 94, 42]);
+    makineler.push(["MS01", "Masura sarım", "MASURA", 84, 22], ["EX01", "Ekstrüder 1", "EKSTRUZYON", 84, 62], ["MT01", "Metraj ve kesim", "METRAJ", 94, 42]);
     for (const [kod, ad, tip, x, y] of makineler) {
       await c.query("INSERT INTO makine (firma_id, kod, ad, tip, plan_x, plan_y) VALUES ($1,$2,$3,$4,$5,$6)", [F, kod, ad, tip, x, y]);
     }
 
     const pet = await ekle("INSERT INTO malzeme (firma_id, kod, ad) VALUES ($1,'PET-025','PET monofilament 0,25 mm') RETURNING id", [F]);
-    const pa6 = await ekle("INSERT INTO malzeme (firma_id, kod, ad) VALUES ($1,'PA6-GR','PA6 granul') RETURNING id", [F]);
+    const pa6 = await ekle("INSERT INTO malzeme (firma_id, kod, ad) VALUES ($1,'PA6-GR','PA6 granül') RETURNING id", [F]);
     const mb = await ekle("INSERT INTO malzeme (firma_id, kod, ad) VALUES ($1,'MB-SYH','Siyah masterbatch') RETURNING id", [F]);
 
     for (const unvan of ["Teknofil Lif", "Anka Polimer", "Renkpol Kimya"]) {
       await c.query("INSERT INTO tedarikci (firma_id, unvan) VALUES ($1,$2)", [F, unvan]);
     }
-    for (const unvan of ["Ege Beyaz Esya A.S.", "Siemens Sanayi ve Ticaret A.S.", "Ford Otosan", "Arcelik A.S."]) {
+    for (const unvan of ["Ege Beyaz Eşya A.Ş.", "Siemens Sanayi ve Ticaret A.Ş.", "Ford Otosan", "Arçelik A.Ş."]) {
       await c.query("INSERT INTO musteri (firma_id, unvan) VALUES ($1,$2)", [F, unvan]);
     }
 
     const kts = await ekle(
-      "INSERT INTO urun (firma_id, kod, ad, kesim_boyu, numune_boyu) VALUES ($1,'KTS-PET-010','Kablo toplama corabi 10 mm PET',100,1) RETURNING id",
+      "INSERT INTO urun (firma_id, kod, ad, kesim_boyu, numune_boyu) VALUES ($1,'KTS-PET-010','Kablo toplama çorabı 10 mm PET',100,1) RETURNING id",
       [F],
     );
     const ps = await ekle(
@@ -132,27 +134,27 @@ async function main() {
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
         [F, urun, asama, ad, nominal, alt, ust, birim, sira],
       );
-    await kar(kts.id, "ILK_PARCA", "Dis cap", 10, 9.7, 10.3, "mm", 1);
-    await kar(kts.id, "ILK_PARCA", "Orgu sikligi", 12, 11, 13, "tur/cm", 2);
-    await kar(kts.id, "METRAJ", "Dis cap", 10, 9.7, 10.3, "mm", 1);
-    await kar(ps.id, "ILK_PARCA", "Ic cap", 12, 11.8, 12.2, "mm", 1);
-    await kar(ps.id, "ILK_PARCA", "Et kalinligi", 0.8, 0.7, 0.9, "mm", 2);
-    await kar(ps.id, "METRAJ", "Ic cap", 12, 11.8, 12.2, "mm", 1);
-    await kar(ps.id, "METRAJ", "Dis cap", 13.6, 13.3, 13.9, "mm", 2);
+    await kar(kts.id, "ILK_PARCA", "Dış çap", 10, 9.7, 10.3, "mm", 1);
+    await kar(kts.id, "ILK_PARCA", "Örgü sıklığı", 12, 11, 13, "tur/cm", 2);
+    await kar(kts.id, "METRAJ", "Dış çap", 10, 9.7, 10.3, "mm", 1);
+    await kar(ps.id, "ILK_PARCA", "İç çap", 12, 11.8, 12.2, "mm", 1);
+    await kar(ps.id, "ILK_PARCA", "Et kalınlığı", 0.8, 0.7, 0.9, "mm", 2);
+    await kar(ps.id, "METRAJ", "İç çap", 12, 11.8, 12.2, "mm", 1);
+    await kar(ps.id, "METRAJ", "Dış çap", 13.6, 13.3, 13.9, "mm", 2);
     // Periyodik proses kontrolu (uretim sirasinda, en gec prosesOlcumAraligiDk dakikada bir)
-    await kar(kts.id, "PROSES", "Dis cap", 10, 9.7, 10.3, "mm", 1);
-    await kar(kts.id, "PROSES", "Orgu sikligi", 12, 11, 13, "tur/cm", 2);
-    await kar(ps.id, "PROSES", "Ic cap", 12, 11.8, 12.2, "mm", 1);
+    await kar(kts.id, "PROSES", "Dış çap", 10, 9.7, 10.3, "mm", 1);
+    await kar(kts.id, "PROSES", "Örgü sıklığı", 12, 11, 13, "tur/cm", 2);
+    await kar(ps.id, "PROSES", "İç çap", 12, 11.8, 12.2, "mm", 1);
 
     for (const [kod, aciklama] of [
-      ["H-01", "Olcu uygunsuz"],
-      ["H-02", "Cap uygunsuz"],
+      ["H-01", "Ölçü uygunsuz"],
+      ["H-02", "Çap uygunsuz"],
       ["H-03", "Renk uygunsuz"],
-      ["H-04", "Orgu sikligi uygunsuz"],
-      ["H-05", "Tel kopmasi"],
-      ["H-06", "Yuzey hatasi"],
-      ["H-07", "Hammadde kaynakli"],
-      ["H-08", "Makine kaynakli"],
+      ["H-04", "Örgü sıklığı uygunsuz"],
+      ["H-05", "Tel kopması"],
+      ["H-06", "Yüzey hatası"],
+      ["H-07", "Hammadde kaynaklı"],
+      ["H-08", "Makine kaynaklı"],
     ]) {
       await c.query("INSERT INTO hata_kodu (firma_id, kod, aciklama) VALUES ($1,$2,$3)", [F, kod, aciklama]);
     }
@@ -160,8 +162,8 @@ async function main() {
     for (const [kod, ad, tip] of [
       ["YR-D1-R01", "Depo 1 Raf 1", "RAF"],
       ["YR-D1-R02", "Depo 1 Raf 2", "RAF"],
-      ["YR-KAR", "Karantina alani", "KARANTINA"],
-      ["YR-NUM-01", "Numune dolabi 1", "NUMUNE"],
+      ["YR-KAR", "Karantina alanı", "KARANTINA"],
+      ["YR-NUM-01", "Numune dolabı 1", "NUMUNE"],
     ]) {
       await c.query("INSERT INTO depo_yeri (firma_id, kod, ad, tip) VALUES ($1,$2,$3,$4)", [F, kod, ad, tip]);
     }
@@ -169,9 +171,9 @@ async function main() {
     // Olcum aletleri: kalibrasyonu gecerli iki alet, suresi gecmis bir alet (gostermek icin)
     const berra = (await c.query("SELECT id FROM kullanici WHERE firma_id = $1 AND kullanici_adi = 'berra'", [F])).rows[0].id;
     for (const [kod, ad, konum, periyot, ayOnce] of [
-      ["KMP-01", "Dijital kumpas 0-150 mm", "Orgu salonu", 12, 2],
-      ["MKR-01", "Mikrometre 0-25 mm", "Kalite laboratuvari", 12, 5],
-      ["KMP-02", "Dijital kumpas 0-150 mm (yedek)", "Ekstruzyon", 6, 8],
+      ["KMP-01", "Dijital kumpas 0-150 mm", "Örgü salonu", 12, 2],
+      ["MKR-01", "Mikrometre 0-25 mm", "Kalite laboratuvarı", 12, 5],
+      ["KMP-02", "Dijital kumpas 0-150 mm (yedek)", "Ekstrüzyon", 6, 8],
     ]) {
       const a = await ekle(
         `INSERT INTO olcum_aleti (firma_id, kod, ad, konum, periyot_ay, son_kalibrasyon, sonraki_kalibrasyon)
